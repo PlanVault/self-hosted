@@ -1,0 +1,173 @@
+groups:
+  - name: planvault_critical
+    rules:
+      - alert: PrometheusTargetDown
+        expr: up{job=~"planvault-api|planvault-jobs|litellm|node-exporter|cadvisor"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Prometheus target {{ $labels.job }} is down
+          description: Target {{ $labels.instance }} has been unreachable for more than 2 minutes.
+
+      - alert: ApiHealthFail
+        expr: up{job="planvault-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: API metrics scrape unavailable
+          description: Prometheus cannot scrape api:8088/metrics (internal only).
+
+      - alert: High5xxRate
+        expr: |
+          (
+            sum(rate(planvault_http_requests_total{status_class="5xx"}[5m]))
+            /
+            sum(rate(planvault_http_requests_total[5m]))
+          ) > 0.05
+          and sum(rate(planvault_http_requests_total[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Elevated HTTP 5xx rate
+          description: More than 5% of HTTP requests returned 5xx over 5m (with request floor).
+
+      - alert: HighLatencyP95
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(planvault_http_request_duration_seconds_bucket[5m])) by (le)
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: HTTP latency p95 above 2s
+          description: 95th percentile HTTP request duration exceeded 2 seconds for 10 minutes.
+
+      - alert: DbPoolPressure
+        expr: |
+          (
+            planvault_hikari_active_connections
+            /
+            planvault_hikari_max_connections
+          ) > 0.9
+          or planvault_hikari_pending_threads > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Database connection pool pressure
+          description: Hikari pool is near max or has threads waiting for a connection.
+
+      - alert: DiskSpaceLow
+        expr: |
+          (
+            node_filesystem_avail_bytes{fstype!~"tmpfs|overlay",mountpoint="/"}
+            /
+            node_filesystem_size_bytes{fstype!~"tmpfs|overlay",mountpoint="/"}
+          ) < 0.15
+          or predict_linear(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay",mountpoint="/"}[6h], 86400) < 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: Host disk space low
+          description: Root filesystem free space below 15% or predicted to fill within 24h.
+
+      - alert: MemoryPressure
+        expr: |
+          (
+            1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)
+          ) > 0.85
+          or (
+            sum(container_memory_usage_bytes{name!=""})
+            /
+            sum(machine_memory_bytes)
+          ) > 0.85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Host or container memory pressure
+          description: Memory utilization above 85% for 10 minutes.
+
+      - alert: RedisExporterDown
+        expr: up{job="redis-exporter"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Redis exporter target down
+          description: redis_exporter scrape target is unavailable.
+
+      - alert: RedisDown
+        expr: redis_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Redis unavailable
+          description: redis_exporter reports Redis is down.
+
+      - alert: PostgresExporterDown
+        expr: up{job="postgres-exporter"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Postgres exporter target down
+          description: postgres_exporter scrape target is unavailable.
+
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Postgres unavailable
+          description: postgres_exporter reports PostgreSQL is down.
+
+      - alert: NoisyTenantIngestion
+        expr: |
+          topk(1, sum(rate(planvault_observability_ingestion_bytes_total[5m])) by (organization_hash))
+          > 2 * avg(sum(rate(planvault_observability_ingestion_bytes_total[5m])) by (organization_hash))
+          and sum(rate(planvault_observability_ingestion_bytes_total[5m])) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Tenant observability ingestion spike
+          description: One organization_hash exceeds 2x the average ingestion rate for 15 minutes.
+
+      - alert: LiteLLMFailures
+        expr: up{job="litellm"} == 0 or rate(litellm_proxy_failed_requests_metric_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: LiteLLM degraded
+          description: LiteLLM target down or elevated failure rate for 5 minutes.
+
+      - alert: JobsStale
+        expr: |
+          absent(up{job="planvault-jobs"} == 1)
+          or absent(planvault_worker_last_success_unixtime{worker="retention"})
+          or absent(planvault_worker_last_success_unixtime{worker="dek_rotation"})
+          or absent(planvault_worker_last_success_unixtime{worker="scheduled_jobs"})
+          or absent(planvault_worker_last_success_unixtime{worker="recurring_schedules"})
+          or absent(planvault_worker_last_success_unixtime{worker="org_hard_delete"})
+          or (time() - planvault_worker_last_success_unixtime{worker="retention"}) > (26 * 3600)
+          or (time() - planvault_worker_last_success_unixtime{worker="dek_rotation"}) > 300
+          or (time() - planvault_worker_last_success_unixtime{worker="scheduled_jobs"}) > 600
+          or (time() - planvault_worker_last_success_unixtime{worker="recurring_schedules"}) > 600
+          or (time() - planvault_worker_last_success_unixtime{worker="gdpr_reconciliation"}) > (25 * 3600)
+          or (time() - planvault_worker_last_success_unixtime{worker="org_hard_delete"}) > (25 * 3600)
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Critical background worker stale
+          description: Worker last_success timestamp is older than expected interval plus grace.

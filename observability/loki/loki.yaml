@@ -1,0 +1,54 @@
+# Local/dev default: LOKI_OBJECT_STORE=filesystem (compose env default).
+# Prod: LOKI_OBJECT_STORE=s3 with LOKI_S3_* (AWS S3 or standalone MinIO/S3-compatible API).
+# Do not use MinIO Gateway.
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2020-10-24
+      store: tsdb
+      object_store: ${LOKI_OBJECT_STORE:-filesystem}
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+storage_config:
+  tsdb_shipper:
+    active_index_directory: /loki/index
+    cache_location: /loki/index_cache
+  aws:
+    bucketnames: ${LOKI_S3_BUCKET:-}
+    endpoint: ${LOKI_S3_ENDPOINT:-}
+    region: ${LOKI_S3_REGION:-eu-central-1}
+    access_key_id: ${LOKI_S3_ACCESS_KEY_ID:-}
+    secret_access_key: ${LOKI_S3_SECRET_ACCESS_KEY:-}
+    insecure: ${LOKI_S3_INSECURE:-false}
+    s3forcepathstyle: ${LOKI_S3_FORCE_PATH_STYLE:-false}
+
+limits_config:
+  ingestion_rate_mb: 10
+  ingestion_burst_size_mb: 20
+  max_streams_per_user: 10000
+  max_entries_limit_per_query: 5000
+  retention_period: 168h
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: ${LOKI_DELETE_REQUEST_STORE:-filesystem}

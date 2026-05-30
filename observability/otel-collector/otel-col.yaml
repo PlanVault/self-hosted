@@ -1,0 +1,89 @@
+# Normal pipelines export all scoped signals (no probabilistic sampling).
+# Peak mode (overload): GitOps or manual edit — insert probabilistic_sampler/peak_* after
+# filter/drop_unscoped_* and before batch, then reload/redeploy the collector.
+# Example peak traces processors:
+#   [memory_limiter, redaction, transform, filter/drop_unscoped_traces, probabilistic_sampler/peak_traces, batch]
+# Example peak logs processors:
+#   [memory_limiter, redaction, transform, filter/drop_unscoped_logs, probabilistic_sampler/peak_logs, batch]
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+        tls:
+          client_ca_file: /certs/ca.crt
+          cert_file: /certs/server.crt
+          key_file: /certs/server.key
+
+processors:
+  memory_limiter:
+    limit_mib: 512
+    spike_limit_mib: 128
+    check_interval: 5s
+  redaction:
+    allow_all_keys: true
+    blocked_values:
+      - "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}"
+      - "\\+?[0-9][0-9 .()\\-]{7,}[0-9]"
+      - "\\b(?:[0-9]{1,3}\\.){3}[0-9]{1,3}\\b"
+      - "(?i)bearer\\s+[a-z0-9._\\-]+"
+  transform:
+    log_statements:
+      - context: log
+        statements:
+          - set(attributes["organization_hash"], attributes["mdc.organization_hash"]) where attributes["organization_hash"] == nil and attributes["mdc.organization_hash"] != nil
+          - set(attributes["organization_hash"], attributes["logback.mdc.organization_hash"]) where attributes["organization_hash"] == nil and attributes["logback.mdc.organization_hash"] != nil
+          - set(attributes["http.route"], attributes["mdc.http.route"]) where attributes["http.route"] == nil and attributes["mdc.http.route"] != nil
+          - set(attributes["http.route"], attributes["logback.mdc.http.route"]) where attributes["http.route"] == nil and attributes["logback.mdc.http.route"] != nil
+          - set(attributes["http.route"], attributes["mdc.httpPath"]) where attributes["http.route"] == nil and attributes["mdc.httpPath"] != nil
+          - set(attributes["http.route"], attributes["logback.mdc.httpPath"]) where attributes["http.route"] == nil and attributes["logback.mdc.httpPath"] != nil
+          - set(attributes["http.route"], attributes["httpPath"]) where attributes["http.route"] == nil and attributes["httpPath"] != nil
+          - set(attributes["organization_hash"], "system") where attributes["organization_hash"] == nil and IsMatch(attributes["http.route"], "^(?:[A-Z]+\\s+)?/(health|metrics|api/health)(?:/.*)?$")
+    trace_statements:
+      - context: span
+        statements:
+          - set(attributes["organization_hash"], attributes["mdc.organization_hash"]) where attributes["organization_hash"] == nil and attributes["mdc.organization_hash"] != nil
+          - set(attributes["http.route"], attributes["mdc.http.route"]) where attributes["http.route"] == nil and attributes["mdc.http.route"] != nil
+          - set(attributes["http.route"], attributes["mdc.httpPath"]) where attributes["http.route"] == nil and attributes["mdc.httpPath"] != nil
+          - set(attributes["organization_hash"], "system") where attributes["organization_hash"] == nil and IsMatch(attributes["http.route"], "^(?:[A-Z]+\\s+)?/(health|metrics|api/health)(?:/.*)?$")
+  filter/drop_unscoped_logs:
+    logs:
+      log_record:
+        - 'attributes["organization_hash"] == nil and attributes["http.route"] != nil and not IsMatch(attributes["http.route"], "^(?:[A-Z]+\\s+)?/(health|metrics|api/health)(?:/.*)?$")'
+  filter/drop_unscoped_traces:
+    traces:
+      span:
+        - 'attributes["organization_hash"] == nil and attributes["http.route"] != nil and not IsMatch(attributes["http.route"], "^(?:[A-Z]+\\s+)?/(health|metrics|api/health)(?:/.*)?$")'
+  probabilistic_sampler/peak_traces:
+    sampling_percentage: 15
+  probabilistic_sampler/peak_logs:
+    sampling_percentage: 15
+  batch: {}
+
+exporters:
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+  loki:
+    endpoint: http://loki:3100/loki/api/v1/push
+  prometheusremotewrite:
+    endpoint: http://prometheus:9090/api/v1/write
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, redaction, transform, filter/drop_unscoped_traces, batch]
+      exporters: [otlp/tempo]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, redaction, transform, filter/drop_unscoped_logs, batch]
+      exporters: [loki]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheusremotewrite]

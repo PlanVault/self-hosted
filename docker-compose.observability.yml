@@ -1,0 +1,179 @@
+# Opt-in observability overlay for on-prem (packaging/onprem/docker-compose.yml).
+# Usage (from packaging/onprem/):
+#   docker compose --env-file .env -f docker-compose.yml -f docker-compose.observability.yml up -d
+#
+# Optional exporters:
+#   COMPOSE_PROFILES=with_redis_exporter,with_postgres_exporter
+#   PROMETHEUS_CONFIG_FILE=./observability/prometheus/prometheus.minimal.yml
+#   COMPOSE_PROFILES=   # omit redis/postgres exporters
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  tempo_data:
+  loki_data:
+
+services:
+  loki:
+    image: grafana/loki:3.3.2
+    restart: unless-stopped
+    mem_limit: 512m
+    memswap_limit: 512m
+    command: ["-config.file=/etc/loki/loki.yaml", "-config.expand-env=true"]
+    environment:
+      LOKI_OBJECT_STORE: ${LOKI_OBJECT_STORE:-filesystem}
+      LOKI_DELETE_REQUEST_STORE: ${LOKI_DELETE_REQUEST_STORE:-filesystem}
+      LOKI_S3_BUCKET: ${LOKI_S3_BUCKET:-}
+      LOKI_S3_ENDPOINT: ${LOKI_S3_ENDPOINT:-}
+      LOKI_S3_REGION: ${LOKI_S3_REGION:-eu-central-1}
+      LOKI_S3_ACCESS_KEY_ID: ${LOKI_S3_ACCESS_KEY_ID:-}
+      LOKI_S3_SECRET_ACCESS_KEY: ${LOKI_S3_SECRET_ACCESS_KEY:-}
+      LOKI_S3_INSECURE: ${LOKI_S3_INSECURE:-false}
+      LOKI_S3_FORCE_PATH_STYLE: ${LOKI_S3_FORCE_PATH_STYLE:-false}
+    volumes:
+      - ./observability/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki_data:/loki
+    networks:
+      - planvault
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    restart: unless-stopped
+    mem_limit: 512m
+    memswap_limit: 512m
+    command: ["-config.file=/etc/tempo.yaml", "-config.expand-env=true"]
+    environment:
+      TEMPO_STORAGE_BACKEND: ${TEMPO_STORAGE_BACKEND:-local}
+      TEMPO_S3_BUCKET: ${TEMPO_S3_BUCKET:-}
+      TEMPO_S3_ENDPOINT: ${TEMPO_S3_ENDPOINT:-}
+      TEMPO_S3_REGION: ${TEMPO_S3_REGION:-eu-central-1}
+      TEMPO_S3_ACCESS_KEY: ${TEMPO_S3_ACCESS_KEY:-}
+      TEMPO_S3_SECRET_KEY: ${TEMPO_S3_SECRET_KEY:-}
+      TEMPO_S3_INSECURE: ${TEMPO_S3_INSECURE:-false}
+      TEMPO_S3_FORCE_PATH_STYLE: ${TEMPO_S3_FORCE_PATH_STYLE:-false}
+    volumes:
+      - ./observability/tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo_data:/var/tempo
+    networks:
+      - planvault
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.120.0
+    restart: unless-stopped
+    mem_limit: 512m
+    memswap_limit: 512m
+    command: ["--config=/etc/otel-col.yaml"]
+    volumes:
+      - ./observability/otel-collector/otel-col.yaml:/etc/otel-col.yaml:ro
+      - ${OTEL_CERTS_HOST_DIR:-./observability/certs}:/certs:ro
+    networks:
+      - planvault
+    depends_on:
+      - tempo
+      - loki
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    restart: unless-stopped
+    mem_limit: 512m
+    memswap_limit: 512m
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle
+      - --web.enable-remote-write-receiver
+    volumes:
+      - ${PROMETHEUS_CONFIG_FILE:-./observability/prometheus/prometheus.yml}:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/rules.yml:/etc/prometheus/rules.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - planvault
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    restart: unless-stopped
+    mem_limit: 256m
+    memswap_limit: 256m
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_USERS_DEFAULT_ROLE: Viewer
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_AUTH_GENERIC_OAUTH_ENABLED: "true"
+      GF_AUTH_GENERIC_OAUTH_NAME: Keycloak
+      GF_AUTH_GENERIC_OAUTH_ALLOW_SIGN_UP: "false"
+      GF_AUTH_GENERIC_OAUTH_CLIENT_ID: ${GRAFANA_OIDC_CLIENT_ID:?Set GRAFANA_OIDC_CLIENT_ID in .env}
+      GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET: ${GRAFANA_OIDC_CLIENT_SECRET:?Set GRAFANA_OIDC_CLIENT_SECRET in .env}
+      GF_AUTH_GENERIC_OAUTH_SCOPES: openid email profile offline_access
+      GF_AUTH_GENERIC_OAUTH_AUTH_URL: ${GRAFANA_OIDC_AUTH_URL:?Set GRAFANA_OIDC_AUTH_URL in .env}
+      GF_AUTH_GENERIC_OAUTH_TOKEN_URL: ${GRAFANA_OIDC_TOKEN_URL:?Set GRAFANA_OIDC_TOKEN_URL in .env}
+      GF_AUTH_GENERIC_OAUTH_API_URL: ${GRAFANA_OIDC_API_URL:?Set GRAFANA_OIDC_API_URL in .env}
+      GF_AUTH_GENERIC_OAUTH_SIGNOUT_REDIRECT_URL: ${GRAFANA_OIDC_SIGNOUT_REDIRECT_URL:-}
+      GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH: >-
+        contains(realm_access.roles[*], 'planvault_observability_admin') && 'Admin' ||
+        contains(realm_access.roles[*], 'planvault_observability_editor') && 'Editor' ||
+        'Viewer'
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    networks:
+      - planvault
+    depends_on:
+      - prometheus
+      - tempo
+      - loki
+
+  node_exporter:
+    image: prom/node-exporter:v1.8.2
+    restart: unless-stopped
+    mem_limit: 64m
+    memswap_limit: 64m
+    command:
+      - --path.rootfs=/host
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    networks:
+      - planvault
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    restart: unless-stopped
+    mem_limit: 128m
+    memswap_limit: 128m
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    networks:
+      - planvault
+
+  redis_exporter:
+    profiles:
+      - with_redis_exporter
+    image: oliver006/redis_exporter:v1.66.0
+    restart: unless-stopped
+    mem_limit: 64m
+    memswap_limit: 64m
+    environment:
+      REDIS_ADDR: redis://redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    networks:
+      - planvault
+
+  postgres_exporter:
+    profiles:
+      - with_postgres_exporter
+    image: prometheuscommunity/postgres-exporter:v0.16.0
+    restart: unless-stopped
+    mem_limit: 64m
+    memswap_limit: 64m
+    environment:
+      DATA_SOURCE_NAME: postgresql://${DB_USER_API}:${DB_PASSWORD_API}@postgres:5432/planvault?sslmode=disable
+    networks:
+      - planvault

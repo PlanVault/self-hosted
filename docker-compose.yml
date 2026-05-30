@@ -1,0 +1,336 @@
+# PlanVault self-hosted stack (single-host Docker Compose v2).
+#
+# Public exposure: only the `edge` service publishes host ports (HTTP by default).
+# Internal services (postgres, redis, keycloak, litellm, api, jobs) stay on the
+# private `planvault` bridge network.
+#
+# Schema migrations: `jobs` is the sole Flyway owner (PLANVAULT_FLYWAY_MIGRATE=true).
+# `api` must never run Flyway (PLANVAULT_FLYWAY_MIGRATE=false).
+#
+# Load environment from `.env` in this directory:
+#   docker compose --env-file .env up -d
+
+networks:
+  planvault:
+    driver: bridge
+
+volumes:
+  pg_data:
+  redis_data:
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    mem_limit: 1152m
+    memswap_limit: 1152m
+    command:
+      - postgres
+      - -c
+      - max_connections=${POSTGRES_MAX_CONNECTIONS:-150}
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_cache_size=768MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=64MB
+    environment:
+      POSTGRES_USER: ${DB_USER_SUPERUSER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD_SUPERUSER}
+      POSTGRES_DB: planvault
+      DB_USER_API: ${DB_USER_API}
+      DB_PASSWORD_API: ${DB_PASSWORD_API}
+      DB_USER_KC: ${DB_USER_KC}
+      DB_PASSWORD_KC: ${DB_PASSWORD_KC}
+      DB_USER_LITELLM: ${DB_USER_LITELLM}
+      DB_PASSWORD_LITELLM: ${DB_PASSWORD_LITELLM}
+    volumes:
+      - ./init/init-dbs.sh:/docker-entrypoint-initdb.d/init-dbs.sh:ro
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      - planvault
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER_SUPERUSER} -d planvault"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    mem_limit: 256m
+    memswap_limit: 256m
+    command:
+      - redis-server
+      - --requirepass
+      - ${REDIS_PASSWORD}
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - 192mb
+      - --maxmemory-policy
+      - noeviction
+    volumes:
+      - redis_data:/data
+    networks:
+      - planvault
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    restart: unless-stopped
+    command: start --import-realm
+    mem_limit: 768m
+    memswap_limit: 768m
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: ${DB_USER_KC}
+      KC_DB_PASSWORD: ${DB_PASSWORD_KC}
+      KC_HOSTNAME: ${KC_PUBLIC_HOSTNAME}
+      KC_HTTP_RELATIVE_PATH: /keycloak
+      KC_PROXY_HEADERS: xforwarded
+      KC_HTTP_ENABLED: "true"
+      KC_LOG_LEVEL: INFO
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+    volumes:
+      - ./init/planvault-realm.json:/opt/keycloak/data/import/planvault-realm.json:ro
+      - ./keycloak/themes:/opt/keycloak/themes:ro
+    networks:
+      - planvault
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080 && printf 'GET /keycloak/realms/planvault/.well-known/openid-configuration HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && cat <&3 | grep -q planvault"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+
+  litellm:
+    image: ghcr.io/berriai/litellm:v1.83.14-stable
+    restart: unless-stopped
+    mem_limit: 1536m
+    memswap_limit: 1536m
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      DATABASE_URL: postgresql://${DB_USER_LITELLM}:${DB_PASSWORD_LITELLM}@postgres:5432/litellm
+      LITELLM_LOG: INFO
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    networks:
+      - planvault
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  api:
+    image: ${PLANVAULT_REGISTRY}/api:${PLANVAULT_VERSION}
+    restart: unless-stopped
+    mem_limit: 1280m
+    memswap_limit: 1280m
+    hostname: api
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_URL: jdbc:postgresql://postgres:5432/planvault
+      DB_USER: ${DB_USER_API}
+      DB_PASSWORD: ${DB_PASSWORD_API}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
+      POSTGRES_MAX_CONNECTIONS: ${POSTGRES_MAX_CONNECTIONS:-150}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      PLANVAULT_LICENSE_KEY: ${PLANVAULT_LICENSE_KEY}
+      TINK_LOCAL_KEYSET_JSON: ${TINK_LOCAL_KEYSET_JSON}
+      SECURITY_KMS_ENABLED: "false"
+      SECURITY_HMAC_KEY: ${SECURITY_HMAC_KEY}
+      DEK_STORE: postgres
+      SESSION_STORE_MODE: postgres
+      GDPR_DELETION_LOG_ENABLED: "false"
+      PLANVAULT_PROFILE: production
+      PLANVAULT_ROLE: api
+      PLANVAULT_FLYWAY_MIGRATE: "false"
+      PLANVAULT_LOG_LLM_BODIES: "false"
+      REDIS_ENABLED: "true"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      LITELLM_URL: http://litellm:4000
+      KEYCLOAK_ADMIN_CLIENT_ID: ${KEYCLOAK_ADMIN_CLIENT_ID}
+      KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET}
+      KEYCLOAK_SERVER_URL: http://keycloak:8080/keycloak
+      KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER}
+      KEYCLOAK_SKIP_ACCESS_TOKEN_AUDIENCE_ISSUER_CHECKS: ${KEYCLOAK_SKIP_ACCESS_TOKEN_AUDIENCE_ISSUER_CHECKS:-false}
+      KEYCLOAK_AZP_PRIMARY: ${KEYCLOAK_AZP_PRIMARY:-planvault-front}
+      SESSION_RETENTION_DAYS: ${SESSION_RETENTION_DAYS:-90}
+      SESSION_RETENTION_MIN_DAYS: ${SESSION_RETENTION_MIN_DAYS:-1}
+      SESSION_RETENTION_MAX_DAYS: ${SESSION_RETENTION_MAX_DAYS:-1461}
+      AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-365}
+      AUDIT_RETENTION_MIN_DAYS: ${AUDIT_RETENTION_MIN_DAYS:-0}
+      AUDIT_RETENTION_MAX_DAYS: ${AUDIT_RETENTION_MAX_DAYS:-3650}
+      PLANVAULT_ORG_SOFT_DELETE_GRACE_DAYS: ${PLANVAULT_ORG_SOFT_DELETE_GRACE_DAYS:-7}
+      PLANVAULT_ORG_SOFT_DELETE_SWEEPER_INTERVAL_HOURS: ${PLANVAULT_ORG_SOFT_DELETE_SWEEPER_INTERVAL_HOURS:-24}
+      JAVA_OPTS: "-Xms256m -Xmx768m -Djava.security.egd=file:/dev/./urandom"
+      OTEL_JAVAAGENT_ENABLED: ${OTEL_JAVAAGENT_ENABLED:-false}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-planvault-api}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE: ${OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE:-/certs/client.crt}
+      OTEL_EXPORTER_OTLP_CLIENT_KEY: ${OTEL_EXPORTER_OTLP_CLIENT_KEY:-/certs/client.key}
+      OTEL_EXPORTER_OTLP_CERTIFICATE: ${OTEL_EXPORTER_OTLP_CERTIFICATE:-/certs/ca.crt}
+      OTEL_INSTRUMENTATION_NETTY_4_1_ENABLED: ${OTEL_INSTRUMENTATION_NETTY_4_1_ENABLED:-false}
+      OTEL_INSTRUMENTATION_JAVA_HTTP_CLIENT_ENABLED: ${OTEL_INSTRUMENTATION_JAVA_HTTP_CLIENT_ENABLED:-false}
+      OTEL_LOGS_EXPORTER: ${OTEL_LOGS_EXPORTER:-otlp}
+      OTEL_INSTRUMENTATION_LOGBACK_APPENDER_EXPERIMENTAL_CAPTURE_ALL_MDC_ATTRIBUTES: ${OTEL_INSTRUMENTATION_LOGBACK_APPENDER_EXPERIMENTAL_CAPTURE_ALL_MDC_ATTRIBUTES:-true}
+      OBSERVABILITY_TENANT_HMAC_KEY: ${OBSERVABILITY_TENANT_HMAC_KEY:-}
+      PEKKO_ACTOR_PROVIDER: cluster
+      PEKKO_CLUSTER_HOSTNAME: api-blue
+      PEKKO_CLUSTER_SBR_STRATEGY: keep-oldest
+      PEKKO_JOURNAL_PLUGIN: jdbc-journal
+      PEKKO_SNAPSHOT_PLUGIN: jdbc-snapshot-store
+    volumes:
+      - ${OTEL_CERTS_HOST_DIR:-./observability/certs}:/certs:ro
+    networks:
+      planvault:
+        aliases:
+          - api-blue
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      litellm:
+        condition: service_started
+
+  jobs:
+    image: ${PLANVAULT_REGISTRY}/api:${PLANVAULT_VERSION}
+    restart: unless-stopped
+    mem_limit: 768m
+    memswap_limit: 768m
+    environment:
+      PLANVAULT_ROLE: jobs
+      PLANVAULT_FLYWAY_MIGRATE: "true"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_URL: jdbc:postgresql://postgres:5432/planvault
+      DB_USER: ${DB_USER_API}
+      DB_PASSWORD: ${DB_PASSWORD_API}
+      DB_POOL_SIZE: ${DB_POOL_SIZE_JOBS:-4}
+      POSTGRES_MAX_CONNECTIONS: ${POSTGRES_MAX_CONNECTIONS:-150}
+      PLANVAULT_LICENSE_KEY: ${PLANVAULT_LICENSE_KEY}
+      TINK_LOCAL_KEYSET_JSON: ${TINK_LOCAL_KEYSET_JSON}
+      SECURITY_KMS_ENABLED: "false"
+      SECURITY_HMAC_KEY: ${SECURITY_HMAC_KEY}
+      DEK_STORE: postgres
+      SESSION_STORE_MODE: postgres
+      GDPR_DELETION_LOG_ENABLED: "false"
+      PLANVAULT_PROFILE: production
+      PLANVAULT_LOG_LLM_BODIES: "false"
+      REDIS_ENABLED: "true"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      LITELLM_URL: http://litellm:4000
+      KEYCLOAK_ADMIN_CLIENT_ID: ${KEYCLOAK_ADMIN_CLIENT_ID}
+      KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET}
+      KEYCLOAK_SERVER_URL: http://keycloak:8080/keycloak
+      KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER}
+      KEYCLOAK_SKIP_ACCESS_TOKEN_AUDIENCE_ISSUER_CHECKS: ${KEYCLOAK_SKIP_ACCESS_TOKEN_AUDIENCE_ISSUER_CHECKS:-false}
+      KEYCLOAK_AZP_PRIMARY: ${KEYCLOAK_AZP_PRIMARY:-planvault-front}
+      SESSION_RETENTION_DAYS: ${SESSION_RETENTION_DAYS:-90}
+      SESSION_RETENTION_MIN_DAYS: ${SESSION_RETENTION_MIN_DAYS:-1}
+      SESSION_RETENTION_MAX_DAYS: ${SESSION_RETENTION_MAX_DAYS:-1461}
+      AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-365}
+      AUDIT_RETENTION_MIN_DAYS: ${AUDIT_RETENTION_MIN_DAYS:-0}
+      AUDIT_RETENTION_MAX_DAYS: ${AUDIT_RETENTION_MAX_DAYS:-3650}
+      PLANVAULT_ORG_SOFT_DELETE_GRACE_DAYS: ${PLANVAULT_ORG_SOFT_DELETE_GRACE_DAYS:-7}
+      PLANVAULT_ORG_SOFT_DELETE_SWEEPER_INTERVAL_HOURS: ${PLANVAULT_ORG_SOFT_DELETE_SWEEPER_INTERVAL_HOURS:-24}
+      GDPR_RECONCILIATION_ON_STARTUP: ${GDPR_RECONCILIATION_ON_STARTUP:-false}
+      JAVA_OPTS: "-Xms128m -Xmx512m -Djava.security.egd=file:/dev/./urandom"
+      OTEL_JAVAAGENT_ENABLED: ${OTEL_JAVAAGENT_ENABLED:-false}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME_JOBS:-planvault-jobs}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE: ${OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE:-/certs/client.crt}
+      OTEL_EXPORTER_OTLP_CLIENT_KEY: ${OTEL_EXPORTER_OTLP_CLIENT_KEY:-/certs/client.key}
+      OTEL_EXPORTER_OTLP_CERTIFICATE: ${OTEL_EXPORTER_OTLP_CERTIFICATE:-/certs/ca.crt}
+      OTEL_INSTRUMENTATION_NETTY_4_1_ENABLED: ${OTEL_INSTRUMENTATION_NETTY_4_1_ENABLED:-false}
+      OTEL_INSTRUMENTATION_JAVA_HTTP_CLIENT_ENABLED: ${OTEL_INSTRUMENTATION_JAVA_HTTP_CLIENT_ENABLED:-false}
+      OTEL_LOGS_EXPORTER: ${OTEL_LOGS_EXPORTER:-otlp}
+      OTEL_INSTRUMENTATION_LOGBACK_APPENDER_EXPERIMENTAL_CAPTURE_ALL_MDC_ATTRIBUTES: ${OTEL_INSTRUMENTATION_LOGBACK_APPENDER_EXPERIMENTAL_CAPTURE_ALL_MDC_ATTRIBUTES:-true}
+      OBSERVABILITY_TENANT_HMAC_KEY: ${OBSERVABILITY_TENANT_HMAC_KEY:-}
+      PEKKO_ACTOR_PROVIDER: cluster
+      PEKKO_CLUSTER_HOSTNAME: jobs
+      PEKKO_CLUSTER_SBR_STRATEGY: keep-oldest
+      PEKKO_JOURNAL_PLUGIN: jdbc-journal
+      PEKKO_SNAPSHOT_PLUGIN: jdbc-snapshot-store
+    volumes:
+      - ${OTEL_CERTS_HOST_DIR:-./observability/certs}:/certs:ro
+    networks:
+      - planvault
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    deploy:
+      replicas: 1
+
+  edge:
+    image: ${PLANVAULT_REGISTRY}/front:${PLANVAULT_VERSION}
+    restart: unless-stopped
+    mem_limit: 96m
+    memswap_limit: 96m
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - planvault
+    depends_on:
+      - api
+      - keycloak
+
+  # Direct HTTPS on the edge (optional). Enable only after placing TLS material under ./tls/:
+  #   tls/fullchain.pem and tls/privkey.pem
+  # Then start: docker compose --profile direct_tls up -d
+  edge-tls:
+    image: ${PLANVAULT_REGISTRY}/front:${PLANVAULT_VERSION}
+    restart: unless-stopped
+    mem_limit: 96m
+    memswap_limit: 96m
+    profiles:
+      - direct_tls
+    ports:
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/default-tls.conf:/etc/nginx/conf.d/default-tls.conf:ro
+      - ./tls:/etc/nginx/tls:ro
+    networks:
+      - planvault
+    depends_on:
+      - api
+      - keycloak

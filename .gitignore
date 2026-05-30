@@ -1,0 +1,15 @@
+.env
+init/planvault-realm.json
+data/
+tls/
+.venv-secrets/
+*.bsp
+
+# IDEA
+.idea
+*.idea
+self-hosted.iml
+
+# OS
+.DS_Store
+Thumbs.db

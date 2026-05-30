@@ -1,0 +1,75 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "id": null,
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "targets": [{ "expr": "up{job=\"postgres-exporter\"}", "legendFormat": "exporter", "refId": "A" }],
+      "title": "Postgres exporter up",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "targets": [{ "expr": "pg_up", "legendFormat": "postgres", "refId": "A" }],
+      "title": "Postgres up",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "pg_stat_database_numbackends{datname=\"planvault\"}",
+          "legendFormat": "backends",
+          "refId": "A"
+        }
+      ],
+      "title": "Postgres connections (planvault DB)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 4,
+      "targets": [{ "expr": "up{job=\"redis-exporter\"}", "legendFormat": "exporter", "refId": "A" }],
+      "title": "Redis exporter up",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "id": 5,
+      "targets": [{ "expr": "redis_up", "legendFormat": "redis", "refId": "A" }],
+      "title": "Redis up",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "id": 6,
+      "targets": [
+        {
+          "expr": "planvault_hikari_pending_threads",
+          "legendFormat": "pending {{pool}}",
+          "refId": "A"
+        }
+      ],
+      "title": "API Hikari pending threads",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["planvault", "datastores"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "title": "Postgres & Redis",
+  "uid": "planvault-postgres-redis",
+  "version": 1
+}

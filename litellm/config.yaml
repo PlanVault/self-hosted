@@ -1,0 +1,32 @@
+# LiteLLM on-premises proxy configuration.
+# Provider API keys are supplied via environment variables only (see .env.example).
+# Message body logging is disabled for privacy.
+
+general_settings:
+  allow_client_side_credentials: true
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+router_settings:
+  enable_pre_call_checks: true
+
+litellm_settings:
+  callbacks: ["prometheus"]
+  success_callback: ["prometheus"]
+  failure_callback: ["prometheus"]
+  num_retries: 2
+  retry_policy:
+    TimeoutErrorRetries: 2
+    InternalServerErrorRetries: 2
+    RateLimitErrorRetries: 1
+  allowed_fails: 3
+  cooldown_time: 30
+
+  turn_off_message_logging: true
+  redact_user_api_key_info: true
+  cache: true
+  cache_params:
+    type: "redis"
+    supported_call_types: ["completion", "acompletion"]
+    host: redis
+    port: "6379"
+    password: os.environ/REDIS_PASSWORD

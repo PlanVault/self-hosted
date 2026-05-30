@@ -1,0 +1,75 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "unit": "Bps" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "targets": [
+        {
+          "expr": "sum(rate(planvault_observability_ingestion_bytes_total[5m])) by (organization_hash)",
+          "legendFormat": "{{organization_hash}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Observability ingestion rate by organization_hash",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 2,
+      "targets": [
+        {
+          "expr": "topk(10, sum(rate(planvault_observability_ingestion_bytes_total[5m])) by (organization_hash))",
+          "legendFormat": "{{organization_hash}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Top 10 tenants by ingestion rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "sum(rate(planvault_noisy_tenant_events_total[5m])) by (organization_hash, reason)",
+          "legendFormat": "{{organization_hash}} {{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Noisy tenant events",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "sum(rate(planvault_llm_tokens_total[5m])) by (organization_hash, model)",
+          "legendFormat": "{{organization_hash}} {{model}}",
+          "refId": "A"
+        }
+      ],
+      "title": "LLM token rate by organization_hash",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["planvault", "observability", "tenant"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "title": "Ingestion by organization_hash",
+  "uid": "planvault-ingestion-by-org-hash",
+  "version": 1
+}
