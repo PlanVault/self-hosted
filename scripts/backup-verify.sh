@@ -9,12 +9,12 @@ Usage: scripts/backup-verify.sh <backup-directory>
 Checks for expected PlanVault backup artifacts:
   - PostgreSQL dump or pg_data snapshot marker
   - encrypted .env copy
-  - rendered Keycloak realm
+  - encrypted rendered Keycloak realm
   - VERSION metadata
   - optional Redis and observability snapshots
 
-This first version validates metadata and artifact presence only. It does not
-perform a disposable restore smoke test.
+This validates metadata and artifact presence only. It does not perform a
+disposable restore smoke test.
 EOF
 }
 
@@ -55,6 +55,12 @@ has_dir_match() {
 printf 'PlanVault backup verification\n'
 printf 'backup: %s\n\n' "$BACKUP_DIR"
 
+if has_match 'manifest.txt'; then
+  pass "backup manifest present"
+else
+  warn "backup manifest missing"
+fi
+
 if has_match 'VERSION'; then
   pass "VERSION metadata present"
 else
@@ -81,10 +87,12 @@ else
   fail "missing encrypted .env backup"
 fi
 
-if has_match 'planvault-realm.json' || has_match 'planvault-realm.json.age' || has_match 'planvault-realm.json.gpg'; then
-  pass "rendered Keycloak realm backup present"
+if has_match 'planvault-realm.json.age' || has_match 'planvault-realm.json.gpg' || has_match 'planvault-realm.json.enc'; then
+  pass "encrypted rendered Keycloak realm backup present"
+elif has_match 'planvault-realm.json'; then
+  fail "plaintext rendered Keycloak realm found in backup; store encrypted only"
 else
-  fail "missing rendered Keycloak realm backup"
+  fail "missing encrypted rendered Keycloak realm backup"
 fi
 
 if has_match 'redis_data.snapshot' || has_dir_match 'redis_data' || has_match 'redis*.rdb' || has_match 'appendonly*.aof'; then

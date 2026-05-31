@@ -1,8 +1,8 @@
 # PlanVault Self-Hosted Configuration Reference
 
 This document is the operator reference for the environment variables and fixed
-runtime settings used by `docker-compose.yml` and
-`docker-compose.observability.yml`. For end-to-end operator runbooks, see
+runtime settings used by `docker-compose.yml`, `docker-compose.observability.yml`,
+and `docker-compose.caddy.yml`. For end-to-end operator runbooks, see
 `docs/monitoring.md`, `docs/backup-restore.md`, `docs/upgrade.md`, and
 `docs/troubleshooting.md`.
 
@@ -38,10 +38,17 @@ The short version:
 | `KEYCLOAK_ISSUER` | `api`, `jobs` | `http://localhost/keycloak/realms/planvault` | Yes before exposure | OIDC issuer expected in tokens. Must equal `KC_PUBLIC_HOSTNAME + /realms/planvault`. |
 | `HTTP_PORT` | `edge` | `80` | Optional | Host port for HTTP traffic. |
 | `HTTPS_PORT` | `edge-tls` | `443` | Optional | Host port for direct TLS when profile `direct_tls` is enabled. |
+| `CADDY_SITE_ADDRESS` | `caddy` overlay | `https://localhost` | For Caddy overlay | Public site address used by Caddy for routing and automatic certificates. |
+| `CADDY_HTTP_PORT` | `caddy` overlay | `80` | For Caddy overlay | Host HTTP port used for ACME and redirects. |
+| `CADDY_HTTPS_PORT` | `caddy` overlay | `443` | For Caddy overlay | Host HTTPS port served by Caddy. |
 
 The default public registry path requires outbound access to `ghcr.io`.
 Restricted-network or offline delivery needs an enterprise-validated mirror or
 image/package transfer process; do not treat it as a local `.env` change.
+
+When using `docker-compose.caddy.yml`, set `HTTP_PORT` to a non-80 value such as
+`8080` so the base `edge` service does not conflict with Caddy's ACME listener
+on host port 80.
 
 ## Secrets And Key Material
 

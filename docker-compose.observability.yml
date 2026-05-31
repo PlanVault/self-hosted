@@ -19,6 +19,8 @@ services:
     restart: unless-stopped
     mem_limit: 512m
     memswap_limit: 512m
+    security_opt:
+      - no-new-privileges:true
     command: ["-config.file=/etc/loki/loki.yaml", "-config.expand-env=true"]
     environment:
       LOKI_OBJECT_STORE: ${LOKI_OBJECT_STORE:-filesystem}
@@ -41,6 +43,8 @@ services:
     restart: unless-stopped
     mem_limit: 512m
     memswap_limit: 512m
+    security_opt:
+      - no-new-privileges:true
     command: ["-config.file=/etc/tempo.yaml", "-config.expand-env=true"]
     environment:
       TEMPO_STORAGE_BACKEND: ${TEMPO_STORAGE_BACKEND:-local}
@@ -62,6 +66,8 @@ services:
     restart: unless-stopped
     mem_limit: 512m
     memswap_limit: 512m
+    security_opt:
+      - no-new-privileges:true
     command: ["--config=/etc/otel-col.yaml"]
     volumes:
       - ./observability/otel-collector/otel-col.yaml:/etc/otel-col.yaml:ro
@@ -77,6 +83,8 @@ services:
     restart: unless-stopped
     mem_limit: 512m
     memswap_limit: 512m
+    security_opt:
+      - no-new-privileges:true
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
@@ -95,6 +103,8 @@ services:
     restart: unless-stopped
     mem_limit: 256m
     memswap_limit: 256m
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
     environment:
@@ -132,6 +142,8 @@ services:
     restart: unless-stopped
     mem_limit: 64m
     memswap_limit: 64m
+    security_opt:
+      - no-new-privileges:true
     command:
       - --path.rootfs=/host
     pid: host
@@ -145,6 +157,8 @@ services:
     restart: unless-stopped
     mem_limit: 128m
     memswap_limit: 128m
+    security_opt:
+      - no-new-privileges:true
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
@@ -160,6 +174,8 @@ services:
     restart: unless-stopped
     mem_limit: 64m
     memswap_limit: 64m
+    security_opt:
+      - no-new-privileges:true
     environment:
       REDIS_ADDR: redis://redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD}
@@ -173,6 +189,8 @@ services:
     restart: unless-stopped
     mem_limit: 64m
     memswap_limit: 64m
+    security_opt:
+      - no-new-privileges:true
     environment:
       DATA_SOURCE_NAME: postgresql://${DB_USER_API}:${DB_PASSWORD_API}@postgres:5432/planvault?sslmode=disable
     networks:

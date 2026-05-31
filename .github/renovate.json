@@ -1,0 +1,28 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "dependencyDashboard": true,
+  "labels": [
+    "dependencies"
+  ],
+  "enabledManagers": [
+    "docker-compose",
+    "github-actions"
+  ],
+  "packageRules": [
+    {
+      "matchManagers": [
+        "docker-compose"
+      ],
+      "groupName": "compose images"
+    },
+    {
+      "matchManagers": [
+        "github-actions"
+      ],
+      "groupName": "github actions"
+    }
+  ]
+}

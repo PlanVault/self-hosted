@@ -80,6 +80,18 @@ for operator-facing topology and network-boundary details.
 | Cosign (optional) | To verify image signatures before deploying |
 | Outbound network | `ghcr.io` (public, no login required), optional LLM providers |
 
+## Platform support
+
+The public self-hosted package targets Linux hosts with Docker Engine and Compose
+v2. Linux `x86_64` and `arm64` are the intended host architectures, subject to
+the published multi-arch support of the pinned third-party images
+(`pgvector`, Redis, Keycloak, LiteLLM, Caddy, and observability components).
+
+CI validates Compose and configuration syntax, but it does not currently run a
+full clean-host smoke test on both architectures. For production ARM64 use,
+verify image pulls and run `./scripts/smoke-test.sh` on the target host before
+accepting the deployment.
+
 ## Quick start
 
 ```bash
@@ -235,6 +247,27 @@ docker compose --env-file .env --profile direct_tls up -d
 
 This adds the `edge-tls` service on `${HTTPS_PORT:-443}`. HTTP on port 80 remains
 available via the `edge` service.
+
+**Managed HTTPS with Caddy (optional):** for simple public pilots without a
+corporate ingress, use the Caddy overlay. DNS for `CADDY_SITE_ADDRESS` must point
+to the host, and Caddy must bind public ports 80/443 for ACME:
+
+```bash
+# in .env
+BASE_URL=https://planvault.example.com
+KC_PUBLIC_HOSTNAME=https://planvault.example.com/keycloak
+KEYCLOAK_ISSUER=https://planvault.example.com/keycloak/realms/planvault
+CORS_ORIGINS=https://planvault.example.com
+HTTP_PORT=8080
+CADDY_SITE_ADDRESS=https://planvault.example.com
+
+./scripts/render-keycloak-realm.sh
+docker compose --env-file .env \
+  -f docker-compose.yml -f docker-compose.caddy.yml up -d
+```
+
+Keep using customer-managed ingress when your platform already provides TLS,
+WAF, identity-aware proxying, or centralized certificate management.
 
 ## Account bootstrap
 

@@ -218,6 +218,32 @@ Rules for support bundles:
 - Redact bearer tokens, cookies, Authorization headers, and provider keys before
   sending logs.
 
+## Container And Host Hardening
+
+The Compose files apply conservative container hardening that should be safe for
+the supported single-host profile:
+
+| Control | Where | Notes |
+|---------|-------|-------|
+| `security_opt: no-new-privileges:true` | Core services and observability overlay | Prevents gaining additional privileges through setuid/setgid paths. |
+| `read_only: true` | `edge`, `edge-tls`, and Caddy overlay | Writable nginx/Caddy runtime paths are provided through `tmpfs` or named volumes. |
+| `tmpfs` runtime paths | `edge`, `edge-tls`, and Caddy overlay | Keeps transient proxy state off the container root filesystem. |
+
+Do not add broad `privileged: true` settings or host port/database exposure in
+local overrides. If you need custom hardening, prefer additive Compose override
+files and test with `scripts/smoke-test.sh`.
+
+Host-level controls are operator-owned and distribution-specific:
+
+- Use AppArmor or SELinux in enforcing mode where your Linux distribution
+  supports it.
+- Restrict Docker daemon access to host administrators.
+- Keep Docker Engine and the Compose plugin patched.
+- Firewall host ports so only the intended ingress, Caddy, direct TLS, or
+  localhost-only observability endpoints are reachable.
+- Protect `/var/lib/docker`, named-volume storage, `.env`, TLS files, and backup
+  destinations as production secrets/data.
+
 ## Keycloak And Identity
 
 Keycloak is bundled for self-hosted deployments and served through edge at

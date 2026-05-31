@@ -39,6 +39,7 @@ make the command fail, but they should be reviewed before production use.
 | URL consistency | Confirms `KEYCLOAK_ISSUER` matches `KC_PUBLIC_HOSTNAME + /realms/planvault` and warns if `CORS_ORIGINS` does not include `BASE_URL`. |
 | Compose config | Runs `docker compose --env-file .env config --quiet`. |
 | Service status | Prints `docker compose ps` output. |
+| Compose healthchecks | `postgres`, `redis`, `keycloak`, `litellm`, `api`, and edge services expose Compose health status when running. |
 | Health endpoint | Calls `http://127.0.0.1:${HTTP_PORT:-80}/health`. |
 | Keycloak metadata | Attempts to reach the public issuer metadata from the host. |
 | API/jobs logs | Prints redacted log tails and warns on common fatal markers. |
@@ -115,6 +116,11 @@ docker compose --env-file .env logs api --tail=120
 docker compose --env-file .env logs keycloak --tail=80
 docker compose --env-file .env logs litellm --tail=80
 ```
+
+`jobs` intentionally waits only for the `api` container to start, not for the API
+healthcheck to pass. This avoids a startup deadlock during first boot or upgrade,
+because `jobs` is the sole Flyway migration owner and the API may remain
+unhealthy until migrations complete.
 
 Redact secrets before sharing logs.
 

@@ -35,18 +35,28 @@ Use your infrastructure snapshot tooling for the Docker volume backing
 4. Start services again.
 5. Record `VERSION`, image digests, and snapshot ID.
 
-### Option B: `pg_dump` Sidecar
+### Option B: `scripts/backup.sh`
 
-Use a temporary container on the `planvault` network. Example pattern:
+Use the bundled helper to create a timestamped backup directory:
 
 ```bash
-mkdir -p backups
-docker compose --env-file .env exec -T postgres \
-  pg_dump -U "$(awk -F= '/^DB_USER_SUPERUSER=/{print $2}' .env)" \
-  -d planvault \
-  --format=custom \
-  --file=/tmp/planvault.dump
-docker compose --env-file .env cp postgres:/tmp/planvault.dump backups/planvault.dump
+./scripts/backup.sh
+```
+
+By default it:
+
+- streams a custom-format PostgreSQL dump into `backups/planvault-backup-*`;
+- records `VERSION`, Compose files, service/profile lists, and image metadata;
+- attempts to save and copy Redis persistence files;
+- refuses to copy plaintext `.env` or rendered Keycloak realm files.
+
+To include encrypted sensitive files, prepare them with your own encryption tool
+and pass their paths:
+
+```bash
+PLANVAULT_ENCRYPTED_ENV_BACKUP=/secure/.env.age \
+PLANVAULT_ENCRYPTED_REALM_BACKUP=/secure/planvault-realm.json.age \
+  ./scripts/backup.sh
 ```
 
 Adjust this for your backup system. Avoid printing passwords; Docker Compose
@@ -64,6 +74,10 @@ VERSION
 
 The `.env` file contains the local Tink keyset and HMAC keys. Losing it can make
 encrypted data unrecoverable.
+
+`scripts/backup.sh` intentionally does not encrypt plaintext files for you. Use
+your approved secret-storage process, then pass encrypted artifacts through
+`PLANVAULT_ENCRYPTED_ENV_BACKUP` and `PLANVAULT_ENCRYPTED_REALM_BACKUP`.
 
 ## Restore Order
 
@@ -132,9 +146,18 @@ Use `scripts/backup-verify.sh` to validate backup metadata:
 ./scripts/backup-verify.sh /path/to/backup-directory
 ```
 
-The first version checks artifact presence and basic metadata only. It does not
-perform a full database restore by default and does not prove the backup is
-restorable.
+The verifier checks artifact presence and basic metadata only. It does not
+perform a full database restore and does not prove the backup is restorable.
+
+Use `scripts/restore-dry-run.sh` to combine backup verification with the manual
+restore order:
+
+```bash
+./scripts/restore-dry-run.sh /path/to/backup-directory
+```
+
+This is read-only. It does not stop containers, overwrite volumes, or restore
+databases.
 
 For high confidence, schedule a periodic disposable restore test:
 

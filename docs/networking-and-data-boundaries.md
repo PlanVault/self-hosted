@@ -23,6 +23,7 @@ delivery, operator runbooks, and a validated smoke test.
 |------|------------------|---------|
 | `${HTTP_PORT:-80}` to `edge` | Host port | Dashboard, API, and Keycloak browser flows over HTTP unless TLS is terminated upstream. |
 | `${HTTPS_PORT:-443}` to `edge-tls` | Host port with profile `direct_tls` | Optional direct TLS when certs are mounted under `./tls/`. |
+| `${CADDY_HTTP_PORT:-80}` / `${CADDY_HTTPS_PORT:-443}` to `caddy` | Host ports with `docker-compose.caddy.yml` | Optional managed HTTPS with automatic certificates. Set `HTTP_PORT` away from `80` to avoid conflicts. |
 | Grafana `127.0.0.1:${GRAFANA_PORT:-3000}` | Localhost only, overlay | Optional monitoring UI. |
 
 Internal services do not publish host ports by default.
@@ -57,7 +58,8 @@ Compose profile.
 For a typical VPC deployment:
 
 1. Put a customer-managed load balancer or reverse proxy in front of `edge`.
-2. Terminate TLS at that layer, or use the `direct_tls` profile.
+2. Terminate TLS at that layer, use the `direct_tls` profile, or use the Caddy
+   overlay for simple public-host ACME certificates.
 3. Restrict inbound traffic to the ports you intentionally expose.
 4. Restrict egress to the image registries, model backends, APIs, and telemetry
    endpoints you explicitly need.

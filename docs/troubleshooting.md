@@ -173,6 +173,11 @@ docker compose --env-file .env logs keycloak --tail=80
 docker compose --env-file .env logs litellm --tail=80
 ```
 
+Compose healthchecks gate the main startup path for PostgreSQL, Redis,
+Keycloak, LiteLLM, API, and edge. `jobs` stays a singleton and waits for the API
+container to start rather than for API health, so migrations can complete during
+first boot or upgrade.
+
 Common causes:
 
 - migration failure in `jobs`;

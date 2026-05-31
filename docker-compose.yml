@@ -24,6 +24,8 @@ services:
     restart: unless-stopped
     mem_limit: 1152m
     memswap_limit: 1152m
+    security_opt:
+      - no-new-privileges:true
     command:
       - postgres
       - -c
@@ -62,6 +64,8 @@ services:
     restart: unless-stopped
     mem_limit: 256m
     memswap_limit: 256m
+    security_opt:
+      - no-new-privileges:true
     command:
       - redis-server
       - --requirepass
@@ -88,6 +92,8 @@ services:
     command: start --import-realm
     mem_limit: 768m
     memswap_limit: 768m
+    security_opt:
+      - no-new-privileges:true
     environment:
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
@@ -120,6 +126,8 @@ services:
     restart: unless-stopped
     mem_limit: 1536m
     memswap_limit: 1536m
+    security_opt:
+      - no-new-privileges:true
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     environment:
       REDIS_HOST: redis
@@ -140,12 +148,20 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import socket; s=socket.create_connection(('127.0.0.1', 4000), 3); s.close()\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   api:
     image: ${PLANVAULT_REGISTRY}/api:${PLANVAULT_VERSION}
     restart: unless-stopped
     mem_limit: 1280m
     memswap_limit: 1280m
+    security_opt:
+      - no-new-privileges:true
     hostname: api
     environment:
       DB_HOST: postgres
@@ -219,13 +235,21 @@ services:
       keycloak:
         condition: service_healthy
       litellm:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "(command -v curl >/dev/null && curl -fsS http://localhost:8088/health >/dev/null) || (command -v wget >/dev/null && wget -qO- http://localhost:8088/health >/dev/null)"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
 
   jobs:
     image: ${PLANVAULT_REGISTRY}/api:${PLANVAULT_VERSION}
     restart: unless-stopped
     mem_limit: 768m
     memswap_limit: 768m
+    security_opt:
+      - no-new-privileges:true
     environment:
       PLANVAULT_ROLE: jobs
       PLANVAULT_FLYWAY_MIGRATE: "true"
@@ -303,6 +327,13 @@ services:
     restart: unless-stopped
     mem_limit: 96m
     memswap_limit: 96m
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
     ports:
       - "${HTTP_PORT:-80}:80"
     volumes:
@@ -310,8 +341,16 @@ services:
     networks:
       - planvault
     depends_on:
-      - api
-      - keycloak
+      api:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   # Direct HTTPS on the edge (optional). Enable only after placing TLS material under ./tls/:
   #   tls/fullchain.pem and tls/privkey.pem
@@ -321,6 +360,13 @@ services:
     restart: unless-stopped
     mem_limit: 96m
     memswap_limit: 96m
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
     profiles:
       - direct_tls
     ports:
@@ -332,5 +378,13 @@ services:
     networks:
       - planvault
     depends_on:
-      - api
-      - keycloak
+      api:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-check-certificate -qO- https://localhost/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s

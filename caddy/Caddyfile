@@ -1,0 +1,11 @@
+{$CADDY_SITE_ADDRESS:https://localhost} {
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "SAMEORIGIN"
+	}
+
+	reverse_proxy edge:80
+}
