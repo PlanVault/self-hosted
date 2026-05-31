@@ -17,6 +17,40 @@ The public self-hosted profile is a single-host Docker Compose deployment:
 The deployment assumes the host, Docker daemon, `.env`, and volume snapshots are
 admin-controlled assets. Protect them as production secrets/data.
 
+## Network And Data Boundary
+
+The supported public self-hosted profile is intended for customer-managed or VPC
+networks:
+
+- Browser and API traffic enters through `edge`.
+- Application services communicate over the private Docker network.
+- Outbound runtime traffic goes only to endpoints you configure: LLM providers,
+  local/private LiteLLM-compatible model endpoints, integrated APIs, MCP
+  servers, webhooks, and optional observability collectors.
+- There is no separate PlanVault product telemetry in the self-hosted stack.
+
+Restricted-network or fully offline delivery is an advanced enterprise path. It
+requires mirrored images/packages, an operator runbook, license/key delivery
+process, and a validated smoke test. It is not a one-line `.env` or Compose
+toggle.
+
+## Supply-Chain Artifacts
+
+PlanVault publishes supply-chain artifacts for procurement and security review:
+
+- Latest API runtime SBOM: <https://planvault.ai/sbom/latest.json>
+- Machine-readable SBOM manifest: <https://planvault.ai/sbom/manifest.json>
+- SBOM discovery endpoint: <https://planvault.ai/.well-known/sbom>
+- Security overview: <https://planvault.ai/security#main>
+
+The public CycloneDX SBOM currently covers the API runtime image. Frontend SBOMs
+are generated for internal vulnerability scanning but are not currently
+published. Use Cosign verification in `README.md` for image provenance and the
+SBOM manifest for dependency/component review.
+
+For the procurement/security-review index, see
+`docs/security-artifacts.md`.
+
 ## Envelope Encryption And DEKs
 
 PlanVault uses envelope encryption for sensitive application data.

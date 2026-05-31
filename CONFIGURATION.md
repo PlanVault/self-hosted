@@ -2,7 +2,9 @@
 
 This document is the operator reference for the environment variables and fixed
 runtime settings used by `docker-compose.yml` and
-`docker-compose.observability.yml`.
+`docker-compose.observability.yml`. For end-to-end operator runbooks, see
+`docs/monitoring.md`, `docs/backup-restore.md`, `docs/upgrade.md`, and
+`docs/troubleshooting.md`.
 
 The short version:
 
@@ -36,6 +38,10 @@ The short version:
 | `KEYCLOAK_ISSUER` | `api`, `jobs` | `http://localhost/keycloak/realms/planvault` | Yes before exposure | OIDC issuer expected in tokens. Must equal `KC_PUBLIC_HOSTNAME + /realms/planvault`. |
 | `HTTP_PORT` | `edge` | `80` | Optional | Host port for HTTP traffic. |
 | `HTTPS_PORT` | `edge-tls` | `443` | Optional | Host port for direct TLS when profile `direct_tls` is enabled. |
+
+The default public registry path requires outbound access to `ghcr.io`.
+Restricted-network or offline delivery needs an enterprise-validated mirror or
+image/package transfer process; do not treat it as a local `.env` change.
 
 ## Secrets And Key Material
 
@@ -315,6 +321,9 @@ The overlay is enabled with:
 docker compose --env-file .env \
   -f docker-compose.yml -f docker-compose.observability.yml up -d
 ```
+
+For the full operator guide, including dashboards, storage choices, profiles,
+and tenant-safe telemetry rules, see `docs/monitoring.md`.
 
 Optional Redis/Postgres exporters are enabled with:
 

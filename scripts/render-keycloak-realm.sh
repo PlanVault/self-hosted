@@ -49,5 +49,6 @@ if ! command -v envsubst >/dev/null 2>&1; then
   die "envsubst not found (install gettext package)"
 fi
 
+# shellcheck disable=SC2016
 envsubst '${BASE_URL} ${KEYCLOAK_ADMIN_CLIENT_SECRET}' <"$TEMPLATE" >"$OUTPUT"
 log "Rendered ${OUTPUT}"

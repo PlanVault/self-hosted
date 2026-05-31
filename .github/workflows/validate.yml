@@ -1,0 +1,93 @@
+name: Validate self-hosted package
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck gettext-base
+
+      - name: Generate CI-safe env file
+        run: |
+          python3 - <<'PY'
+from pathlib import Path
+
+version = Path("VERSION").read_text(encoding="utf-8").strip()
+replacements = {
+    "__GENERATE__": "ci-generated-placeholder",
+    "__INVALID_LICENSE_JWT__": "ci-invalid-license",
+    "__INVALID_OPENAI_KEY__": "ci-invalid-openai-key",
+    "__INVALID_ANTHROPIC_KEY__": "ci-invalid-anthropic-key",
+    "__INVALID_GEMINI_KEY__": "ci-invalid-gemini-key",
+    "__INVALID__": "ci-invalid-placeholder",
+}
+
+lines = []
+for line in Path(".env.example").read_text(encoding="utf-8").splitlines():
+    if line.startswith("PLANVAULT_VERSION="):
+        lines.append(f"PLANVAULT_VERSION={version}")
+        continue
+    for old, new in replacements.items():
+        line = line.replace(old, new)
+    if line.startswith("TINK_LOCAL_KEYSET_JSON="):
+        line = "TINK_LOCAL_KEYSET_JSON='{\"primaryKeyId\":1,\"key\":[]}'"
+    lines.append(line)
+
+extra = {
+    "GRAFANA_ADMIN_PASSWORD": "ci-grafana-password",
+    "GRAFANA_OIDC_CLIENT_ID": "planvault-grafana",
+    "GRAFANA_OIDC_CLIENT_SECRET": "ci-grafana-client-secret",
+    "GRAFANA_OIDC_AUTH_URL": "http://localhost/keycloak/realms/planvault/protocol/openid-connect/auth",
+    "GRAFANA_OIDC_TOKEN_URL": "http://localhost/keycloak/realms/planvault/protocol/openid-connect/token",
+    "GRAFANA_OIDC_API_URL": "http://localhost/keycloak/realms/planvault/protocol/openid-connect/userinfo",
+}
+existing = {line.split("=", 1)[0] for line in lines if line and not line.startswith("#") and "=" in line}
+for key, value in extra.items():
+    if key not in existing:
+        lines.append(f"{key}={value}")
+
+Path(".env.ci").write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+
+      - name: Validate Compose config
+        run: |
+          docker compose --env-file .env.ci config --quiet
+          docker compose --env-file .env.ci \
+            -f docker-compose.yml -f docker-compose.observability.yml config --quiet
+
+      - name: Validate shell scripts
+        run: |
+          bash -n scripts/*.sh
+          shellcheck scripts/*.sh
+
+      - name: Check version pin
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          env_version="$(awk -F= '/^PLANVAULT_VERSION=/{print $2}' .env.example)"
+          test "$version" = "$env_version"
+
+      - name: Check secret hygiene
+        run: |
+          if git ls-files --error-unmatch .env >/dev/null 2>&1; then
+            echo "::error::.env must not be committed"
+            exit 1
+          fi
+
+          if git grep -nE \
+            '(PLANVAULT_LICENSE_KEY=eyJ|OPENAI_API_KEY=sk-[A-Za-z0-9_-]{20,}|ANTHROPIC_API_KEY=sk-ant-[A-Za-z0-9_-]{20,}|GEMINI_API_KEY=AIza[0-9A-Za-z_-]{20,}|Authorization:[[:space:]]*Bearer[[:space:]]+eyJ|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)' \
+            -- . ':!.env.example' ':!docs/**' ':!README.md' ':!SECURITY_MODEL.md' ':!CONFIGURATION.md' ':!.github/workflows/validate.yml'; then
+            echo "::error::possible committed secret detected"
+            exit 1
+          fi

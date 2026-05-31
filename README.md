@@ -27,6 +27,8 @@ contact [support@planvault.ai](mailto:support@planvault.ai).
 - [TLS and ingress](#tls-and-ingress)
 - [Account bootstrap](#account-bootstrap)
 - [Observability (optional)](#observability-optional)
+- [Security artifacts](#security-artifacts)
+- [Operator runbooks](#operator-runbooks)
 - [Upgrade checklist](#upgrade-checklist)
 - [Backup and restore](#backup-and-restore)
 - [Troubleshooting](#troubleshooting)
@@ -40,11 +42,20 @@ contact [support@planvault.ai](mailto:support@planvault.ai).
 - [Security at PlanVault](https://planvault.ai/security#main) — security posture, controls, and trust information.
 - [API docs](https://planvault.ai/api-docs#/main) — OpenAPI sources and interactive API reference.
 - [PlanVault Integration Examples](https://github.com/PlanVault/planvault-examples) — runnable examples for OpenAPI import, LangGraph webhooks, MCP hosts, approval gates, n8n, SSE chat, Kafka triggers, and smoke tests.
+- [SBOM manifest](https://planvault.ai/sbom/manifest.json) — public CycloneDX SBOM index for supply-chain review.
 
 ## Architecture
 
 A single Compose stack on one host. The `edge` (nginx) service is the only
 public entry point and reverse-proxies to the API, dashboard, and Keycloak.
+
+Deployment scope: this public repository supports single-host Docker Compose in
+customer-managed or VPC environments. Restricted-network or fully offline
+deployments, mirrored registries, and other runtime models require validated
+enterprise delivery runbooks. See
+[`docs/production-topology.md`](docs/production-topology.md) and
+[`docs/networking-and-data-boundaries.md`](docs/networking-and-data-boundaries.md)
+for operator-facing topology and network-boundary details.
 
 | Service | Image | Role | Host exposure |
 |---------|-------|------|---------------|
@@ -93,14 +104,18 @@ cd self-hosted
 #    Re-run this whenever you change BASE_URL or KEYCLOAK_ADMIN_CLIENT_SECRET.
 ./scripts/render-keycloak-realm.sh
 
-# 5. Pull images and start the stack.
+# 5. Run preflight before pulling images or exposing the stack.
+./scripts/preflight-check.sh
+
+# 6. Pull images and start the stack.
 docker compose --env-file .env pull
 docker compose --env-file .env up -d
 ```
 
-**6. Verify and open the app:**
+**7. Verify and open the app:**
 
 ```bash
+./scripts/smoke-test.sh
 curl -fsS "http://127.0.0.1:${HTTP_PORT:-80}/health"
 docker compose ps
 ```
@@ -173,7 +188,15 @@ for image in api front; do
 done
 ```
 
-A CycloneDX SBOM is published as a GitHub Release artifact for each version.
+Cosign verifies image provenance. SBOMs support dependency and supply-chain
+review:
+
+- [Latest API runtime SBOM](https://planvault.ai/sbom/latest.json)
+- [SBOM manifest](https://planvault.ai/sbom/manifest.json)
+- [SBOM discovery](https://planvault.ai/.well-known/sbom)
+
+The public SBOM currently covers the API runtime image. Frontend SBOMs are used
+for internal vulnerability scanning but are not currently published.
 
 ## Security boundary
 
@@ -246,6 +269,26 @@ By default Loki and Tempo use local filesystem storage; point them at
 S3-compatible object storage (`LOKI_S3_*` / `TEMPO_S3_*`) for production
 retention.
 
+See [Monitoring](docs/monitoring.md) for the full overlay guide.
+
+## Security artifacts
+
+Use [Security artifacts](docs/security-artifacts.md) as the procurement/security
+review index. It links the official security page, public SBOM URLs, Cosign
+verification, topology/data-boundary docs, and artifact-sharing rules.
+
+## Operator runbooks
+
+- [Smoke tests](docs/smoke-tests.md) — install/upgrade/restore verification with `scripts/smoke-test.sh`.
+- `scripts/preflight-check.sh` — local checks before first start or upgrade; does not require services to be running.
+- [Troubleshooting](docs/troubleshooting.md) — common failure modes and safe diagnostic commands.
+- [Backup and restore](docs/backup-restore.md) — artifacts to back up, restore order, and verification.
+- [Upgrade](docs/upgrade.md) — version pinning, jobs-first migrations, and rollback limits.
+- [Monitoring](docs/monitoring.md) — Grafana/Prometheus/Loki/Tempo/OTel overlay and tenant-safe telemetry.
+- [Security artifacts](docs/security-artifacts.md) — SBOM, Cosign, review documents, and sharing rules.
+- [Production topology](docs/production-topology.md) — single-host topology, stateful services, volumes, and trust boundaries.
+- [Networking and data boundaries](docs/networking-and-data-boundaries.md) — inbound/outbound paths, VPC guidance, and restricted-network notes.
+
 ## Upgrade checklist
 
 1. **Backup** PostgreSQL (`pg_data` volume) and store `.env` securely offline.
@@ -255,6 +298,8 @@ retention.
 5. **Start remaining services:** `docker compose up -d`.
 6. **Verify** `/health` and run application smoke tests.
 7. **Rollback:** restore the volume snapshot and previous image tag. Irreversible Flyway migrations cannot be rolled back by image downgrade alone — coordinate with PlanVault support before upgrading across major versions.
+
+See [Upgrade](docs/upgrade.md) for the full runbook.
 
 ## Backup and restore
 
@@ -268,6 +313,8 @@ increase LLM latency until rebuilt.
 `init/planvault-realm.json` in your secrets manager — never in ticket systems or
 email.
 
+See [Backup and restore](docs/backup-restore.md) for the full runbook.
+
 ## Troubleshooting
 
 | Symptom | First checks |
@@ -279,6 +326,8 @@ email.
 | `envsubst: command not found` | Install the `gettext` package. |
 | Migration errors | Inspect `jobs` logs only; never scale `jobs` above one replica. |
 
+See [Troubleshooting](docs/troubleshooting.md) for the full runbook.
+
 ## Safe diagnostics (support)
 
 You may share:
@@ -287,6 +336,7 @@ You may share:
 - Redacted `docker compose logs` (no environment dumps)
 - Output of `curl /health` (no tokens)
 - Compose profile list and image digests (`docker compose images`)
+- `scripts/support-bundle.sh` output after local review/redaction
 
 **Never share:** `.env`, `PLANVAULT_LICENSE_KEY`, database dumps, raw Keycloak
 exports with secrets, or unredacted logs that may contain JWTs or API keys.
