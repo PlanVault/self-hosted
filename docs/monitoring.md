@@ -143,6 +143,33 @@ Keep observability safe for support and internal review:
 - Treat `OBSERVABILITY_TENANT_HMAC_KEY` as a secret and back it up with `.env`.
 - Redact logs before sharing support bundles.
 
+### Strict Loki Tenant Isolation
+
+By default (`LOKI_AUTH_ENABLED=false`) Loki stores all logs in an anonymous
+tenant — adequate for local/dev and single-operator SaaS deployments. For
+regulated environments or any deployment where log data must be isolated at
+the storage boundary, enable strict mode:
+
+```env
+LOKI_AUTH_ENABLED=true
+```
+
+When enabled, the OTel Collector automatically routes each log record to the
+Loki tenant matching its `organization_hash` via the `X-Scope-OrgID` header
+(set from the `loki.tenant` resource attribute). Platform logs (health and
+metrics routes) are routed to the reserved `system` tenant. Cross-tenant
+queries return empty results — isolation is enforced at the Loki storage
+boundary, not only at the query layer.
+
+Grafana's Loki datasource is pre-configured to default to the `system` tenant
+(`X-Scope-OrgID: system`), so dashboards show platform logs without manual
+header injection. To inspect a specific org tenant in Grafana Explore, set the
+`X-Scope-OrgID` header to the target `organization_hash` value.
+
+**Rollback:** set `LOKI_AUTH_ENABLED=false` (or unset) and restart the `loki`
+service. Existing data is retained; logs resume landing in the anonymous tenant.
+No data loss occurs at any step because Loki multi-tenant storage is additive.
+
 ## Basic Triage
 
 Check overlay status:

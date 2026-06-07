@@ -40,6 +40,7 @@ processors:
           - set(attributes["http.route"], attributes["logback.mdc.httpPath"]) where attributes["http.route"] == nil and attributes["logback.mdc.httpPath"] != nil
           - set(attributes["http.route"], attributes["httpPath"]) where attributes["http.route"] == nil and attributes["httpPath"] != nil
           - set(attributes["organization_hash"], "system") where attributes["organization_hash"] == nil and IsMatch(attributes["http.route"], "^(?:[A-Z]+\\s+)?/(health|metrics|api/health)(?:/.*)?$")
+          - set(resource.attributes["loki.tenant"], attributes["organization_hash"])
     trace_statements:
       - context: span
         statements:

@@ -142,6 +142,15 @@ groups:
           summary: Tenant observability ingestion spike
           description: One organization_hash exceeds 2x the average ingestion rate for 15 minutes.
 
+      - alert: RunBudgetGuardrailHits
+        expr: rate(planvault_run_budget_exceeded_total[10m]) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Sustained run budget guardrail hits ({{ $labels.reason }})
+          description: Runs are consistently being terminated by the execution budget guardrail (reason={{ $labels.reason }}) for 10 minutes. Review maxToolCallsPerRun / maxRunDurationSeconds project settings or investigate runaway agents.
+
       - alert: LiteLLMFailures
         expr: up{job="litellm"} == 0 or rate(litellm_proxy_failed_requests_metric_total[5m]) > 0.05
         for: 5m

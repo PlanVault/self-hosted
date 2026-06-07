@@ -2,7 +2,7 @@
 # Prod: LOKI_OBJECT_STORE=s3 with LOKI_S3_* (AWS S3 or standalone MinIO/S3-compatible API).
 # Do not use MinIO Gateway.
 
-auth_enabled: false
+auth_enabled: ${LOKI_AUTH_ENABLED:-false}
 
 server:
   http_listen_port: 3100

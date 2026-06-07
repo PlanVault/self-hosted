@@ -15,3 +15,6 @@ datasources:
           name: trace_id
           url: "$${__value.raw}"
           urlDisplayLabel: Tempo trace
+      httpHeaderName1: "X-Scope-OrgID"
+    secureJsonData:
+      httpHeaderValue1: "system"

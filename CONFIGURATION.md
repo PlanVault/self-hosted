@@ -369,6 +369,7 @@ do not edit the `GF_*` mapping unless you are customizing Grafana itself.
 
 | Variable | Service | Default | Change? | Meaning |
 |----------|---------|---------|---------|---------|
+| `LOKI_AUTH_ENABLED` | `loki` | `false` | **Recommended `true` for production / regulated** | Enables Loki multi-tenant auth (`X-Scope-OrgID`). When `true`, each organization's logs are stored and queryable only under its own tenant; cross-tenant reads return empty results. Set `false` for local/dev. See [Strict Loki Tenant Isolation](docs/monitoring.md#strict-loki-tenant-isolation) in the monitoring guide. |
 | `LOKI_OBJECT_STORE` | `loki` | `filesystem` | For production retention | Object store backend. Use `s3` for S3-compatible storage. |
 | `LOKI_DELETE_REQUEST_STORE` | `loki` | `filesystem` | For production retention | Store for delete requests. Match your object-store choice. |
 | `LOKI_S3_BUCKET` | `loki` | unset | Required for S3 | S3 bucket name. |

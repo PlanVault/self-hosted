@@ -159,6 +159,20 @@
       ],
       "title": "Tool call latency p95",
       "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 40 },
+      "id": 10,
+      "targets": [
+        {
+          "expr": "sum(rate(planvault_run_budget_exceeded_total[5m])) by (reason)",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Run budget guardrail hits (planvault_run_budget_exceeded_total)",
+      "type": "timeseries"
     }
   ],
   "refresh": "30s",
