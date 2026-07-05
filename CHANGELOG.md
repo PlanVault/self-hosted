@@ -7,6 +7,23 @@ Images follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.17] — 2026-07-05
+
+### Security
+- OpenTelemetry Java agent upgraded to 2.26.1 (fixes CVE-2026-33701)
+- API and front images rebuilt with fresh OS security patches (fixes CVE-2026-45447 among others)
+
+### Added
+- Optional policy consent gate flag `PLANVAULT_POLICY_ACKNOWLEDGEMENT_ENABLED`, passed through by `docker-compose.yml` and documented in `CONFIGURATION.md` / `.env.example` (default off / unchanged behavior)
+
+### Changed
+- Org members can approve or deny runtime tool approvals on their own sessions
+- Default free plan org-ownership quota of `0` now blocks organization creation (previously untested edge)
+- Default `PLANVAULT_VERSION` and `VERSION` pin to `ghcr.io/planvault/*:0.1.17`
+
+### Note
+- Versions 0.1.4–0.1.16 were image-only releases without deployment-configuration changes; this entry covers the configuration delta since 0.1.3.
+
 ## [0.1.3] — 2026-05-30
 
 ### Changed

@@ -258,6 +258,14 @@ profile. It requires the DynamoDB deletion-log table, IAM/credentials or endpoin
 configuration, reconciliation runbook, backup/retention policy, and support
 validation.
 
+## Policy Consent Gate
+
+Optional consent gating for console users (available since image `0.1.17`).
+
+| Variable | Services | Value / Default | Change? | Meaning |
+|----------|----------|-----------------|---------|---------|
+| `PLANVAULT_POLICY_ACKNOWLEDGEMENT_ENABLED` | `api`, `jobs` | `false` | Optional | When `true`, console users must accept the privacy policy and terms (recorded with Art. 7(1) evidence in `user_policy_consent`) before using the app. |
+
 ## Roles, Migrations, And Runtime Profile
 
 These values define how the same API image behaves as either the request-serving
