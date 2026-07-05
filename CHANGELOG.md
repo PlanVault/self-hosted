@@ -7,6 +7,11 @@ Images follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.19] — 2026-07-05
+
+### Changed
+- Default `PLANVAULT_VERSION` and `VERSION` pin to `ghcr.io/planvault/*:0.1.19` (image-only release; no deployment-configuration changes)
+
 ## [0.1.18] — 2026-07-05
 
 ### Changed
