@@ -41,6 +41,7 @@ contact [support@planvault.ai](mailto:support@planvault.ai).
 - [Docs](https://planvault.ai/docs#main) — product documentation, security and compliance notes, deployment guidance, architecture, and glossary.
 - [Security at PlanVault](https://planvault.ai/security#main) — security posture, controls, and trust information.
 - [API docs](https://planvault.ai/api-docs#/main) — OpenAPI sources and interactive API reference.
+- [MCP docs](https://planvault.ai/docs/mcp) — PlanVault as an MCP server (Cursor / Claude Code / Claude Desktop) and MCP servers as governed tools, including OAuth 2.1.
 - [PlanVault Integration Examples](https://github.com/PlanVault/planvault-examples) — runnable examples for OpenAPI import, LangGraph webhooks, MCP hosts, approval gates, n8n, SSE chat, Kafka triggers, and smoke tests.
 - [SBOM manifest](https://planvault.ai/sbom/manifest.json) — public CycloneDX SBOM index for supply-chain review.
 
@@ -66,6 +67,8 @@ for operator-facing topology and network-boundary details.
 | `redis` | `redis:7-alpine` | Session/cache store | private network only |
 | `keycloak` | `quay.io/keycloak/keycloak:26.0` | OIDC identity provider (realm `planvault`) | private network only, served at `/keycloak` |
 | `litellm` | `ghcr.io/berriai/litellm` | LLM gateway / provider routing | private network only |
+| `mcp` (profile `mcp`) | `ghcr.io/planvault/mcp` | **MCP agent server** — PlanVault as an MCP server for AI assistants | private network only, served at `${BASE_URL}/mcp` through `edge` |
+| `outbound-connectors` (profile `mcp_outbound`) | `ghcr.io/planvault/mcp` | Outbound OAuth 2.1 connector for MCP servers registered with `auth_mode = "oauth"` | private network only, no edge route |
 
 ## Prerequisites
 
@@ -156,6 +159,7 @@ random values. The variables you typically touch by hand during initial setup:
 | `HTTP_PORT` / `HTTPS_PORT` | Optional | Edge host ports (default `80` / `443`). |
 | `OPENAI_API_KEY` … | Optional | Infra-level LLM keys; org-level BYOK is preferred. |
 | `SESSION_RETENTION_DAYS`, `AUDIT_RETENTION_DAYS`, … | Optional | Data retention windows. See `.env.example`. |
+| `PLANVAULT_MCP_ENABLED`, `PLANVAULT_OUTBOUND_CONNECTORS_ENABLED`, `COMPOSE_PROFILES` | Optional | Turn on the MCP agent server and/or the outbound OAuth connector. See [MCP (optional)](#mcp-optional). |
 
 For the full operator reference, including every environment variable and fixed
 runtime setting used by `docker-compose.yml` and
@@ -193,7 +197,7 @@ Images are signed keylessly via Sigstore. Verify before deploying — replace
 
 ```bash
 VERSION="$(tr -d '[:space:]' < VERSION)"
-for image in api front; do
+for image in api front mcp; do   # drop `mcp` if you do not enable the MCP profiles
   cosign verify "ghcr.io/planvault/${image}:${VERSION}" \
     --certificate-identity-regexp="github.com/planvault" \
     --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
@@ -216,6 +220,8 @@ for internal vulnerability scanning but are not currently published.
 |-------|----------|
 | **edge** | Host ports `${HTTP_PORT:-80}` (and optional `${HTTPS_PORT:-443}` with profile `direct_tls`) |
 | **postgres, redis, keycloak, litellm, api, jobs** | Docker network only — no host ports |
+| **mcp** (profile `mcp`) | Docker network only; reachable from outside solely as `${BASE_URL}/mcp` through `edge`, Bearer project API key required |
+| **outbound-connectors** (profile `mcp_outbound`) | Docker network only; no edge route; shared internal bearer |
 | **Secrets** | `.env` on disk (never commit or email) |
 | **Data** | Named volumes `pg_data`, `redis_data` |
 
@@ -269,6 +275,52 @@ docker compose --env-file .env \
 Keep using customer-managed ingress when your platform already provides TLS,
 WAF, identity-aware proxying, or centralized certificate management.
 
+## MCP (optional)
+
+PlanVault speaks Model Context Protocol in both directions from one optional image,
+`ghcr.io/planvault/mcp`, split into two Compose profiles so you only run what you use
+(design notes: [ADR 0002](docs/adr/0002-mcp-sidecar-profiles.md); product docs:
+[planvault.ai/docs/mcp](https://planvault.ai/docs/mcp)).
+
+**PlanVault as an MCP server** (profile `mcp`) — Cursor, Claude Code and Claude Desktop connect
+to `${BASE_URL}/mcp` with a project API key scoped to only `hrn:project:mcp:execute` and see
+exactly four tools that drive the whole governed catalog; approvals stay in the console.
+
+```bash
+# in .env
+PLANVAULT_MCP_ENABLED=true
+COMPOSE_PROFILES=mcp
+
+docker compose --env-file .env pull mcp
+docker compose --env-file .env up -d
+./scripts/smoke-test.sh      # probes /mcp (expects 401 without a key)
+```
+
+Then, in the console, create a project API key with only the `hrn:project:mcp:execute` scope and
+add the server to your client, for example Claude Code:
+
+```bash
+claude mcp add --transport http planvault "https://<your-host>/mcp" --header "Authorization: Bearer sk_live_..."
+```
+
+**MCP servers as governed tools** need no extra service for the `stdio`, `bearer` and `headers`
+auth modes. Servers that require **OAuth 2.1** additionally need the outbound connector
+(profile `mcp_outbound`, internal-only, stateless) and an `https` `BASE_URL`:
+
+```bash
+# in .env — OUTBOUND_CONNECTORS_INTERNAL_TOKEN was generated by scripts/generate-secrets.sh
+PLANVAULT_OUTBOUND_CONNECTORS_ENABLED=true
+COMPOSE_PROFILES=mcp,mcp_outbound
+
+./scripts/preflight-check.sh
+docker compose --env-file .env pull outbound-connectors
+docker compose --env-file .env up -d
+```
+
+Both flags default to `false` and both profiles are off by default; a deployment that does not
+use MCP is unchanged. Full variable reference: [CONFIGURATION.md](CONFIGURATION.md) sections
+"MCP Agent Server (Inbound)" and "Outbound MCP Connectors (OAuth 2.1)".
+
 ## Account bootstrap
 
 The bundled realm allows self-registration by default so the first pilot
@@ -321,12 +373,13 @@ verification, topology/data-boundary docs, and artifact-sharing rules.
 - [Security artifacts](docs/security-artifacts.md) — SBOM, Cosign, review documents, and sharing rules.
 - [Production topology](docs/production-topology.md) — single-host topology, stateful services, volumes, and trust boundaries.
 - [Networking and data boundaries](docs/networking-and-data-boundaries.md) — inbound/outbound paths, VPC guidance, and restricted-network notes.
+- [ADR 0002 — MCP sidecar profiles](docs/adr/0002-mcp-sidecar-profiles.md) — why the MCP image is one image, two roles, two optional profiles, routed through `edge`.
 
 ## Upgrade checklist
 
 1. **Backup** PostgreSQL (`pg_data` volume) and store `.env` securely offline.
 2. **Pin** the new release: update `PLANVAULT_VERSION` in `.env` and `VERSION` to match, then `docker compose --env-file .env pull`.
-3. **Review** the new release's `.env.example` for new required keys, and read `CHANGELOG.md`.
+3. **Review** the new release's `.env.example` for new required keys, and read `CHANGELOG.md`. If you run the `mcp` / `mcp_outbound` profiles, `docker compose pull` fetches the `mcp` image under the same tag.
 4. **Start jobs first** (migrations): `docker compose up -d jobs` and wait until logs show Flyway complete.
 5. **Start remaining services:** `docker compose up -d`.
 6. **Verify** `/health` and run application smoke tests.
@@ -378,7 +431,7 @@ exports with secrets, or unredacted logs that may contain JWTs or API keys.
 
 | Destination | Purpose |
 |-------------|---------|
-| `ghcr.io/planvault` | Pull `api` and `front` images |
+| `ghcr.io/planvault` | Pull `api` and `front` images (and `mcp` when an MCP profile is enabled) |
 | `quay.io`, `docker.io`, `ghcr.io/berriai` | Pull base images (postgres, redis, keycloak, litellm) |
 | LLM providers (optional) | OpenAI, Anthropic, Google, or customer BYOK endpoints |
 

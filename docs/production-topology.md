@@ -18,6 +18,9 @@ flowchart TD
   jobs["jobs (migrations + background work)"]
   keycloak["keycloak (OIDC)"]
   litellm["litellm (LLM gateway)"]
+  mcp["mcp (MCP agent server, profile mcp)"]
+  outbound["outbound-connectors (OAuth 2.1 MCP adapter, profile mcp_outbound)"]
+  mcpClients["MCP clients (Cursor / Claude Code / Claude Desktop)"]
   postgres["postgres (pg_data volume)"]
   redis["redis (redis_data volume)"]
   observability["Optional observability overlay"]
@@ -30,6 +33,11 @@ flowchart TD
   caddy --> edge
   edge --> api
   edge --> keycloak
+  mcpClients -->|"HTTPS /mcp"| ingress
+  edge -->|"/mcp (profile mcp)"| mcp
+  mcp --> api
+  api -->|"profile mcp_outbound"| outbound
+  outbound -->|"OAuth 2.1 + Streamable HTTP"| externalApis
   api --> postgres
   api --> redis
   api --> keycloak
@@ -56,6 +64,8 @@ flowchart TD
 | `api` | Stateless process with durable backing stores | Do not run migrations here. |
 | `jobs` | Singleton worker | Sole Flyway owner and background worker. Do not scale above one replica. |
 | `edge` / `edge-tls` | Stateless | Public entry point for base/direct TLS profiles. |
+| `mcp` (profile `mcp`) | Stateless | Inbound MCP role of `ghcr.io/planvault/mcp`; resolves tenancy per request from the API key. Restart-safe: MCP runs live in the API journal. |
+| `outbound-connectors` (profile `mcp_outbound`) | Stateless | Outbound OAuth 2.1 role of the same image; no DB, no DEK, nothing on disk. |
 | Caddy overlay | Stateless proxy with cert state | Optional managed HTTPS overlay. Certificate/account state is stored in `caddy_data` / `caddy_config`. |
 | Observability overlay | Stateful if enabled | Prometheus, Grafana, Loki, and Tempo use named volumes. For production retention, configure object storage for Loki/Tempo. |
 
@@ -64,8 +74,10 @@ flowchart TD
 | Boundary | What crosses it | Control |
 |----------|-----------------|---------|
 | Internet / customer network to `edge` or Caddy | Browser traffic, Runtime API calls, Keycloak browser flows | Customer TLS/ingress policy or Caddy ACME, `BASE_URL`, `CORS_ORIGINS`, `KC_PUBLIC_HOSTNAME`. |
-| `edge` to private Docker network | HTTP proxy traffic to `api` and `keycloak` | Only `edge` publishes host ports by default. |
-| Runtime to external tools | HTTP/OpenAPI tools, webhooks, MCP endpoints | Configure only trusted targets; use HTTPS where possible. |
+| `edge` to private Docker network | HTTP proxy traffic to `api`, `keycloak`, and (profile `mcp`) the MCP agent server at `/mcp` | Only `edge` publishes host ports by default. |
+| MCP clients to `${BASE_URL}/mcp` | Streamable HTTP MCP sessions from Cursor / Claude Code / Claude Desktop | Project API key scoped to `hrn:project:mcp:execute` only; approvals stay in the console; sessions tagged `source=mcp`. |
+| `api`/`jobs` to `outbound-connectors` | OAuth 2.1 authorization, token refresh, and MCP calls for `auth_mode = "oauth"` servers | Internal shared bearer (`OUTBOUND_CONNECTORS_INTERNAL_TOKEN`); sidecar is stateless and never published. |
+| Runtime to external tools | HTTP/OpenAPI tools, webhooks, MCP endpoints (stdio / Streamable HTTP; OAuth 2.1 via the outbound connector) | Configure only trusted targets; use HTTPS where possible. The outbound URL policy is re-validated before every call. |
 | Runtime to model backends | LiteLLM calls to external providers or local/private endpoints | Provider credentials remain configured by the operator/org; prompts never receive plaintext secrets. |
 | App to durable stores | PostgreSQL and Redis | Internal Docker network only; protect host volumes and backups. |
 | App to observability | OTLP logs/traces/metrics when enabled | Use tenant-safe labels and avoid raw payload logging. |

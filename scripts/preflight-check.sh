@@ -145,6 +145,40 @@ if [[ -f "$ENV_FILE" ]]; then
   https_port="$(read_env_value HTTPS_PORT || printf '443')"
   check_port "$http_port" "HTTP_PORT"
   check_port "$https_port" "HTTPS_PORT/direct_tls"
+
+  # Optional MCP features (CONFIGURATION.md "MCP Agent Server" / "Outbound MCP Connectors").
+  compose_profiles="$(read_env_value COMPOSE_PROFILES || true)"
+  mcp_enabled="$(read_env_value PLANVAULT_MCP_ENABLED || printf 'false')"
+  outbound_enabled="$(read_env_value PLANVAULT_OUTBOUND_CONNECTORS_ENABLED || printf 'false')"
+
+  if [[ "$mcp_enabled" == "true" ]]; then
+    if [[ ",${compose_profiles}," == *",mcp,"* ]]; then
+      pass "MCP agent server: PLANVAULT_MCP_ENABLED=true and profile mcp is in COMPOSE_PROFILES"
+    else
+      warn "PLANVAULT_MCP_ENABLED=true but COMPOSE_PROFILES does not include 'mcp'; start with --profile mcp or the /mcp route returns 502"
+    fi
+  elif [[ ",${compose_profiles}," == *",mcp,"* ]]; then
+    warn "COMPOSE_PROFILES includes 'mcp' but PLANVAULT_MCP_ENABLED is not true; the sidecar will start but the API façade stays disabled"
+  fi
+
+  if [[ "$outbound_enabled" == "true" ]]; then
+    outbound_token="$(read_env_value OUTBOUND_CONNECTORS_INTERNAL_TOKEN || true)"
+    if [[ ${#outbound_token} -ge 32 && "$outbound_token" != *"__GENERATE__"* ]]; then
+      pass "OUTBOUND_CONNECTORS_INTERNAL_TOKEN is set (>= 32 chars)"
+    else
+      fail "OUTBOUND_CONNECTORS_INTERNAL_TOKEN must be set and at least 32 characters when PLANVAULT_OUTBOUND_CONNECTORS_ENABLED=true (run scripts/generate-secrets.sh)"
+    fi
+    if [[ "$base_url" == https://* || "$base_url" == http://localhost* ]]; then
+      pass "BASE_URL is acceptable for OAuth 2.1 redirects (https, or localhost for a trial)"
+    else
+      fail "BASE_URL must be https:// when PLANVAULT_OUTBOUND_CONNECTORS_ENABLED=true (the API refuses to start otherwise)"
+    fi
+    if [[ ",${compose_profiles}," == *",mcp_outbound,"* ]]; then
+      pass "profile mcp_outbound is in COMPOSE_PROFILES"
+    else
+      warn "PLANVAULT_OUTBOUND_CONNECTORS_ENABLED=true but COMPOSE_PROFILES does not include 'mcp_outbound'; start with --profile mcp_outbound or OAuth MCP servers fail at runtime"
+    fi
+  fi
 fi
 
 if [[ -f "$ENV_FILE" ]] && docker compose --env-file "$ENV_FILE" config --quiet >/dev/null 2>&1; then

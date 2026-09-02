@@ -273,6 +273,23 @@ Fixes:
 - Set `BASE_URL` and `KC_PUBLIC_HOSTNAME` to HTTPS public URLs.
 - Re-render the Keycloak realm after URL changes.
 
+## MCP Endpoint Or OAuth Connector Problems
+
+Symptoms and first checks (details in `CONFIGURATION.md`, MCP sections):
+
+| Symptom | Likely cause | Check |
+|---------|--------------|-------|
+| `${BASE_URL}/mcp` returns `502` | `mcp` profile not running | `docker compose --env-file .env ps mcp`; add `mcp` to `COMPOSE_PROFILES` and `up -d` |
+| `${BASE_URL}/mcp` returns `404` from the API | `PLANVAULT_MCP_ENABLED` is not `true` on `api` | `docker compose logs api \| grep -i "MCP agent server"` |
+| Client sees `401` with a valid-looking key | Key lacks `hrn:project:mcp:execute`, or the header is not `Authorization: Bearer …` | Re-create the key in the console with only that scope |
+| `execute` returns `403` | Key has no MCP scope (nothing is created) | Same as above |
+| Registering an `oauth` MCP server fails with a validation error | `PLANVAULT_OUTBOUND_CONNECTORS_ENABLED` is `false` | Enable it together with profile `mcp_outbound`, or use `bearer` + `secret:KEY` |
+| `api` exits at startup mentioning `outbound-connectors` | Token shorter than 32 chars or `BASE_URL` not `https` | `./scripts/preflight-check.sh` |
+| OAuth connect ends in `reconnect_required` | Grant revoked or refresh failed at the provider | Reconnect in the console; `docker compose logs outbound-connectors` (redacted) |
+
+Never paste MCP project API keys, OAuth codes, or tokens into tickets; the sidecar and the
+smoke test redact them, but shell history does not.
+
 ## Escalation
 
 Before contacting support:

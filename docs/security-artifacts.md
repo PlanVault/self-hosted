@@ -26,7 +26,7 @@ deploying:
 
 ```bash
 VERSION="$(tr -d '[:space:]' < VERSION)"
-for image in api front; do
+for image in api front mcp; do   # `mcp` is only pulled when an MCP profile is enabled
   cosign verify "ghcr.io/planvault/${image}:${VERSION}" \
     --certificate-identity-regexp="github.com/planvault" \
     --certificate-oidc-issuer="https://token.actions.githubusercontent.com"

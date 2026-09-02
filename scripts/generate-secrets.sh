@@ -92,6 +92,9 @@ replace_generate_placeholder "KEYCLOAK_ADMIN_CLIENT_SECRET" "$(rand_hex 24)"
 replace_generate_placeholder "LITELLM_MASTER_KEY" "sk-litellm-$(rand_hex 24)"
 replace_generate_placeholder "SECURITY_HMAC_KEY" "$(rand_b64 32)"
 replace_generate_placeholder "OBSERVABILITY_TENANT_HMAC_KEY" "$(rand_b64 32)"
+# Shared bearer between api and the optional outbound MCP connector sidecar (profile `mcp_outbound`).
+# Generated unconditionally so enabling the profile later is a flag flip, not a secret rotation.
+replace_generate_placeholder "OUTBOUND_CONNECTORS_INTERNAL_TOKEN" "$(rand_hex 32)"
 replace_generate_placeholder "TINK_LOCAL_KEYSET_JSON" "${tink_env_value}"
 
 VERSION_FILE="${ROOT_DIR}/VERSION"

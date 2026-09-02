@@ -8,8 +8,10 @@ Compose stack. For the full parameter table, see `CONFIGURATION.md`.
 The public self-hosted profile is a single-host Docker Compose deployment:
 
 - `edge` is the only service with host ports.
-- `api`, `jobs`, `postgres`, `redis`, `keycloak`, and `litellm` stay on the
-  private Docker network `planvault`.
+- `api`, `jobs`, `postgres`, `redis`, `keycloak`, `litellm`, and the optional
+  `mcp` / `outbound-connectors` sidecars stay on the private Docker network
+  `planvault`. The MCP agent server is reachable from outside only as
+  `${BASE_URL}/mcp` through `edge`; the outbound connector has no edge route.
 - Secrets live in `.env` on the host and are injected as environment variables.
 - Durable data lives in named Docker volumes (`pg_data`, `redis_data`, and
   optional observability volumes).
@@ -33,6 +35,48 @@ Restricted-network or fully offline delivery is an advanced enterprise path. It
 requires mirrored images/packages, an operator runbook, license/key delivery
 process, and a validated smoke test. It is not a one-line `.env` or Compose
 toggle.
+
+## MCP Surfaces (Optional Profiles)
+
+Both MCP services run the same signed image (`ghcr.io/planvault/mcp`) in different roles
+and are off by default (see `docs/adr/0002-mcp-sidecar-profiles.md`).
+
+**MCP agent server (`mcp`, profile `mcp`)** — a public-facing surface once enabled:
+
+- Authentication is a per-request Bearer **project API key** that must be scoped to
+  `hrn:project:mcp:execute` only. A key without that scope receives `403` before any session
+  or run is created. Never grant `session:write` to a key used by an MCP client: that scope
+  would let the client bypass the approval gate.
+- There is deliberately **no approve/deny tool**. Human approvals happen only in the console
+  through the `approval_url` returned to the client; `provide_input` fills requested values
+  without the write scope.
+- The `task` text arriving over MCP is treated as untrusted input from an agent that may have
+  ingested untrusted content: it goes through the planner, the validator, and every policy
+  gate exactly like a Runtime API prompt. Sessions are tagged `source=mcp`, and the client
+  name/version headers are recorded as session metadata.
+- `execute` is idempotent (`idempotency_key`, 900 s window in Redis); repeated calls return
+  the same run with `deduplicated: true`.
+- The sidecar holds no tenant configuration: project and organisation are resolved from the
+  key on each request via `GET /api/v1/mcp/whoami`.
+- Static Bearer over HTTPS is the shipped authentication model. Inbound OAuth 2.1 for MCP
+  clients is an upstream roadmap item; treat the MCP URL like any other API-key surface and
+  terminate TLS in front of `edge`.
+
+**Outbound connector (`outbound-connectors`, profile `mcp_outbound`)** — internal only:
+
+- Reachable solely from `api`/`jobs` on the Docker network with the shared bearer
+  `OUTBOUND_CONNECTORS_INTERNAL_TOKEN` (>= 32 characters; both sides refuse to start
+  otherwise).
+- Stateless by construction: no database connection, no DEK, nothing on disk. OAuth grants
+  arrive in the request body and are re-encrypted under the organisation DEK by the API.
+  PKCE verifiers are single-use with a short TTL; only a hash of the OAuth `state` is stored.
+- `code`, `code_verifier`, `refresh_token`, and `client_secret` are redacted from logs;
+  connection events reach the audit trail with closed-enum reason codes.
+- The API re-validates its outbound URL policy immediately before every call to a third-party
+  MCP server (DNS-rebinding window closed). The sidecar performs no SSRF validation of its own
+  and must therefore never be exposed beyond the private network.
+- The `stdio`, `bearer`, and `headers` MCP auth modes never touch this service; only
+  `auth_mode = "oauth"` does.
 
 ## Supply-Chain Artifacts
 

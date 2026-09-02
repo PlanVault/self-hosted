@@ -42,7 +42,8 @@ make the command fail, but they should be reviewed before production use.
 | Compose healthchecks | `postgres`, `redis`, `keycloak`, `litellm`, `api`, and edge services expose Compose health status when running. |
 | Health endpoint | Calls `http://127.0.0.1:${HTTP_PORT:-80}/health`. |
 | Keycloak metadata | Attempts to reach the public issuer metadata from the host. |
-| API/jobs logs | Prints redacted log tails and warns on common fatal markers. |
+| MCP endpoint (when `PLANVAULT_MCP_ENABLED=true`) | Sends an unauthenticated `POST` to `http://127.0.0.1:${HTTP_PORT:-80}/mcp` and expects `401`; `502`/`503` means the `mcp` profile is not running. |
+| API/jobs logs | Prints redacted log tails and warns on common fatal markers; includes `mcp` and `outbound-connectors` when their flags are enabled. |
 
 ## Typical Failures
 
@@ -133,6 +134,20 @@ use org-level BYOK later. If model calls fail:
 2. Confirm outbound network access to the provider or local/private model
    endpoint.
 3. Inspect `litellm` logs after redaction.
+
+### MCP Endpoint Returns 502
+
+`PLANVAULT_MCP_ENABLED=true` but the `mcp` service is not running. Add `mcp` to
+`COMPOSE_PROFILES` in `.env` (or start with `--profile mcp`) and run
+`docker compose --env-file .env up -d`. An unauthenticated request should then
+return `401`.
+
+### OAuth MCP Server Rejected Or API Fails To Start
+
+`auth_mode = "oauth"` servers are rejected while `PLANVAULT_OUTBOUND_CONNECTORS_ENABLED`
+is `false`. When it is `true`, the API requires `OUTBOUND_CONNECTORS_INTERNAL_TOKEN`
+(>= 32 characters) and an `https` `BASE_URL`; `./scripts/preflight-check.sh` reports
+both, and `docker compose logs api` names the missing value.
 
 ## Support Escalation Checklist
 

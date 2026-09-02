@@ -23,13 +23,14 @@ The short version:
 | Fixed runtime policy | Deliberately pinned for the supported self-hosted profile. | `DEK_STORE=postgres`, `SESSION_STORE_MODE=postgres`, `SECURITY_KMS_ENABLED=false` | Treat as read-only unless support gives a migration plan. |
 | Internal container wiring | Hostnames, ports, service roles, and plugin choices inside the Compose network. | `DB_HOST=postgres`, `LITELLM_URL=http://litellm:4000`, `PLANVAULT_ROLE=api` | Do not change in normal deployments. |
 | Optional observability | Only used when the observability overlay is enabled. | `GRAFANA_*`, `LOKI_*`, `TEMPO_*`, `OTEL_*` | Configure only if you run the overlay. |
+| Optional MCP | Only used when the `mcp` / `mcp_outbound` Compose profiles are enabled. | `PLANVAULT_MCP_ENABLED`, `PLANVAULT_OUTBOUND_CONNECTORS_ENABLED`, `OUTBOUND_CONNECTORS_INTERNAL_TOKEN`, `COMPOSE_PROFILES` | Configure only if you use MCP; see the two MCP sections below. |
 
 ## Release And Public URLs
 
 | Variable | Services | Default | Change? | Meaning |
 |----------|----------|---------|---------|---------|
-| `PLANVAULT_REGISTRY` | `api`, `jobs`, `edge`, `edge-tls` image references | `ghcr.io/planvault` | Usually no | Public image registry. No `docker login` is required for the default registry. |
-| `PLANVAULT_VERSION` | `api`, `jobs`, `edge`, `edge-tls` image references | From `VERSION` / `.env.example` | Yes, per upgrade | Pinned image tag. Must match a published release. Never use `latest` for supported deployments. |
+| `PLANVAULT_REGISTRY` | `api`, `jobs`, `edge`, `edge-tls`, `mcp`, `outbound-connectors` image references | `ghcr.io/planvault` | Usually no | Public image registry. No `docker login` is required for the default registry. |
+| `PLANVAULT_VERSION` | `api`, `jobs`, `edge`, `edge-tls`, `mcp`, `outbound-connectors` image references | From `VERSION` / `.env.example` | Yes, per upgrade | Pinned image tag. Must match a published release (the optional `mcp` image is published under the same tag). Never use `latest` for supported deployments. |
 | `PLANVAULT_LICENSE_KEY` | `api`, `jobs` | none | Yes | Offline license JWT supplied by PlanVault. Never commit, email, or paste into tickets. |
 | `BASE_URL` | Rendered into Keycloak realm by `scripts/render-keycloak-realm.sh` | `http://localhost` | Yes before exposure | Public dashboard/API origin, without a trailing slash. Re-render the Keycloak realm after changing it. |
 | `PUBLIC_DOMAIN` | Documentation and optional integrations | `localhost` | Yes before exposure | Hostname only, with no scheme or path. |
@@ -407,6 +408,119 @@ do not edit the `GF_*` mapping unless you are customizing Grafana itself.
 |----------|---------|-------|---------|---------|
 | `REDIS_ADDR` | `redis_exporter` | `redis://redis:6379` | No | Internal Redis target for metrics. |
 | `DATA_SOURCE_NAME` | `postgres_exporter` | assembled from `DB_USER_API` / `DB_PASSWORD_API` | No | Internal PostgreSQL exporter DSN. |
+
+## MCP Agent Server (Inbound) — Profile `mcp`
+
+PlanVault can act as an **MCP server** for AI assistants (Cursor, Claude Code, Claude Desktop).
+The optional `mcp` service runs the inbound role of `ghcr.io/planvault/mcp` and is reached only
+through `edge` at `${BASE_URL}/mcp`; it publishes no host port. Clients authenticate with a
+project API key scoped to **only** `hrn:project:mcp:execute` and see exactly four tools
+(`discover_capabilities`, `execute`, `check_status`, `provide_input`). Approvals are never
+granted over MCP — the client receives an `approval_url` into the console. Design rationale:
+[`docs/adr/0002-mcp-sidecar-profiles.md`](docs/adr/0002-mcp-sidecar-profiles.md); product
+documentation: <https://planvault.ai/docs/mcp>.
+
+Enable with both halves — the API flag and the Compose profile:
+
+```bash
+# .env
+PLANVAULT_MCP_ENABLED=true
+COMPOSE_PROFILES=mcp
+
+docker compose --env-file .env pull mcp
+docker compose --env-file .env up -d
+./scripts/smoke-test.sh          # probes /mcp and expects 401 without a key
+```
+
+| Variable | Services | Default | Change? | Meaning |
+|----------|----------|---------|---------|---------|
+| `PLANVAULT_MCP_ENABLED` | `api`, `jobs` | `false` | Yes, to enable | Mounts the MCP façade (`/api/v1/projects/{id}/mcp/*`, `GET /api/v1/mcp/whoami`) in the API. Requires Redis (already fixed on in this stack); the API refuses to start if Redis were disabled. |
+| `PLANVAULT_MCP_DASHBOARD_BASE_URL` | `api`, `jobs` | `${BASE_URL}` (wired by Compose) | No | Base for the `approval_url` / `trace_url` returned to MCP clients (`…/app/orgs/{org}/projects/{project}/sessions/{session}`). Same origin as the dashboard in this stack. |
+| `COMPOSE_PROFILES` | Compose | unset | Yes, to enable | `mcp` starts the agent server; `mcp,mcp_outbound` starts both MCP services. Equivalent to `--profile` on the command line. |
+| `SIDECAR_ROLES` | `mcp` | `inbound` | No | Role of the sidecar image in this service. Fixed wiring. |
+| `PLANVAULT_URL` | `mcp` | `http://api:8088` | No | Internal API address the sidecar forwards to. |
+| `MCP_HTTP_PORT` | `mcp` | `8877` | No | Internal listener; only `edge` reaches it. |
+
+Fixed façade defaults inside the API (override only with support guidance, via a Compose
+override file): idempotency window 900 s (`PLANVAULT_MCP_IDEMPOTENCY_TTL_SECONDS`), `execute`
+wait cap 60 s (`PLANVAULT_MCP_EXECUTE_MAX_WAIT_MS_CAP`), capability-map budget 600 tokens
+(`PLANVAULT_MCP_CAPABILITY_MAP_MAX_TOKENS`).
+
+Client configuration (replace `<host>` with your `BASE_URL` host; keep the key out of
+committed files):
+
+```json
+{ "mcpServers": { "planvault": {
+    "url": "https://<host>/mcp",
+    "headers": { "Authorization": "Bearer ${env:PLANVAULT_MCP_KEY}" } } } }
+```
+
+```bash
+claude mcp add --transport http planvault https://<host>/mcp --header "Authorization: Bearer sk_live_..."
+```
+
+Security notes: the key scope must never include `session:write` (that would let an MCP client
+bypass the approval gate); sessions created over MCP are tagged `source=mcp`; the `task` text is
+treated as untrusted input and passes every policy gate. The MCP agent server authenticates with
+a static Bearer key over HTTPS — inbound OAuth 2.1 for MCP clients is an upstream roadmap item.
+When the profile is not running, `${BASE_URL}/mcp` returns `502` from `edge` by design.
+
+## Outbound MCP Connectors (OAuth 2.1) — Profile `mcp_outbound`
+
+MCP servers registered in the console (Organisation settings → MCP) are executed by the API
+itself for the `stdio` (with `env`, incl. `secret:KEY` vault references), `bearer` and `headers`
+auth modes — **no extra service is needed for those**. Servers registered with
+`auth_mode = "oauth"` need the **outbound connector role** of the same sidecar image
+(`outbound-connectors` service): a stateless process that performs the OAuth 2.1
+authorization-code + PKCE flow (client registration precedence CIMD → preconfigured client →
+DCR) and speaks Streamable HTTP MCP on the API's behalf. Tokens are encrypted under the
+organisation DEK by the API; the sidecar persists nothing and is never reachable from outside
+the Docker network.
+
+| Outbound MCP auth mode | Needs `mcp_outbound` |
+|------------------------|----------------------|
+| `stdio` with `env` (incl. `secret:KEY`) | No |
+| `http` with `bearer` | No |
+| `http` with `headers` | No |
+| `http` with `oauth` (OAuth 2.1, CIMD / DCR) | **Yes** — rejected at create/update time while disabled |
+
+Enable with an `https` `BASE_URL` (the OAuth redirect URI and the CIMD client document are
+derived from it; the API refuses to start with a plain `http` origin other than `localhost`):
+
+```bash
+# .env
+PLANVAULT_OUTBOUND_CONNECTORS_ENABLED=true
+COMPOSE_PROFILES=mcp,mcp_outbound       # or just mcp_outbound
+# OUTBOUND_CONNECTORS_INTERNAL_TOKEN is generated by scripts/generate-secrets.sh
+
+./scripts/preflight-check.sh
+docker compose --env-file .env pull outbound-connectors
+docker compose --env-file .env up -d
+```
+
+| Variable | Services | Default | Change? | Meaning |
+|----------|----------|---------|---------|---------|
+| `PLANVAULT_OUTBOUND_CONNECTORS_ENABLED` | `api`, `jobs` | `false` | Yes, to enable | Allows `auth_mode = "oauth"` MCP servers and routes their calls through the sidecar. When `true` the API requires the token and an acceptable public base URL at startup. |
+| `OUTBOUND_CONNECTORS_INTERNAL_TOKEN` | `api`, `jobs`, `outbound-connectors` | generated (64 hex chars) | Generate, then preserve | Shared bearer between the API and the sidecar. Both sides refuse to start with fewer than 32 characters. |
+| `PLANVAULT_OUTBOUND_CONNECTORS_SIDECAR_URL` | `api`, `jobs` | `http://outbound-connectors:8878` | No | Internal address of the sidecar. |
+| `PLANVAULT_OUTBOUND_CONNECTORS_PUBLIC_BASE_URL` | `api`, `jobs` | `${BASE_URL}` (wired by Compose) | No | PlanVault's externally reachable origin. Produces the CIMD document URL `…/api/v1/mcp/oauth/client-metadata.json` and the redirect URI `…/api/v1/mcp/oauth/callback`; the third-party authorization server must be able to fetch the former. |
+| `PLANVAULT_OUTBOUND_CONNECTORS_DASHBOARD_RETURN_URL` | `api`, `jobs` | falls back to the public base URL | Optional | Where the browser is sent after the OAuth callback. Not wired by default; set through a Compose override if the console lives on another origin. |
+| `PLANVAULT_OUTBOUND_CONNECTORS_REAUTH_PAUSE_ENABLED` | `api`, `jobs` | `false` | Optional | When `true`, a lapsed grant pauses the run in `awaiting_reauth` (TTL 3600 s) instead of failing it closed with `reconnect_required`. Separate operational decision; off by default. |
+| `SIDECAR_ROLES` | `outbound-connectors` | `outbound` | No | Role of the sidecar image in this service. |
+| `CONNECTOR_SIDECAR_PORT` / `CONNECTOR_SIDECAR_BIND` | `outbound-connectors` | `8878` / `0.0.0.0` | No | Internal listener. Never published on the host. |
+| `CONNECTOR_SIDECAR_CLIENT_METADATA_URL` | `outbound-connectors` | `${BASE_URL}/api/v1/mcp/oauth/client-metadata.json` (wired) | No | Must equal the API's public base URL + the CIMD path; the sidecar derives `client_uri` and the redirect URI from it. |
+| `CONNECTOR_SIDECAR_CLIENT_NAME` | `outbound-connectors` | `PlanVault` | Optional | `client_name` presented to third-party authorization servers during registration. |
+
+Operational behaviour: tokens are refreshed silently before expiry with one retry on `401`;
+a revoked grant fails the tool call closed with `reconnect_required` and the server must be
+reconnected in the console. `code`, `code_verifier`, `refresh_token` and `client_secret` are
+redacted from sidecar logs. Disabling the feature again (`false` + profile removed) leaves
+existing `oauth` servers rejected at run time until they are switched to another auth mode.
+
+**Workaround without the profile.** If the third-party MCP server also accepts a long-lived API
+key, register it with `auth_mode = "bearer"` and a `secret:KEY` reference resolved from the
+organization vault. Treat that as an explicit decision to hold a long-lived credential: it does
+not rotate, and it cannot be revoked from PlanVault.
 
 ## Default Billing Plan
 

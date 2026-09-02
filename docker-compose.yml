@@ -1,8 +1,17 @@
 # PlanVault self-hosted stack (single-host Docker Compose v2).
 #
 # Public exposure: only the `edge` service publishes host ports (HTTP by default).
-# Internal services (postgres, redis, keycloak, litellm, api, jobs) stay on the
-# private `planvault` bridge network.
+# Internal services (postgres, redis, keycloak, litellm, api, jobs, and the optional
+# mcp / outbound-connectors sidecars) stay on the private `planvault` bridge network.
+#
+# Optional MCP profiles (docs/adr/0002-mcp-sidecar-profiles.md):
+#   mcp           — PlanVault as an MCP server for Cursor / Claude Code / Claude Desktop,
+#                   reachable at ${BASE_URL}/mcp through `edge`. Pair with
+#                   PLANVAULT_MCP_ENABLED=true.
+#   mcp_outbound  — internal-only OAuth 2.1 connector for MCP servers registered with
+#                   auth_mode = "oauth". Pair with PLANVAULT_OUTBOUND_CONNECTORS_ENABLED=true.
+# Enable persistently with COMPOSE_PROFILES=mcp,mcp_outbound in .env, or per command with
+# `docker compose --profile mcp up -d`.
 #
 # Schema migrations: `jobs` is the sole Flyway owner (PLANVAULT_FLYWAY_MIGRATE=true).
 # `api` must never run Flyway (PLANVAULT_FLYWAY_MIGRATE=false).
@@ -204,6 +213,15 @@ services:
       PLANVAULT_ORG_SOFT_DELETE_GRACE_DAYS: ${PLANVAULT_ORG_SOFT_DELETE_GRACE_DAYS:-7}
       PLANVAULT_ORG_SOFT_DELETE_SWEEPER_INTERVAL_HOURS: ${PLANVAULT_ORG_SOFT_DELETE_SWEEPER_INTERVAL_HOURS:-24}
       PLANVAULT_POLICY_ACKNOWLEDGEMENT_ENABLED: ${PLANVAULT_POLICY_ACKNOWLEDGEMENT_ENABLED:-false}
+      # MCP (optional; CONFIGURATION.md "MCP Agent Server" and "Outbound MCP Connectors").
+      # Both roles read the same values so api and jobs agree (Redis is already enabled above).
+      PLANVAULT_MCP_ENABLED: ${PLANVAULT_MCP_ENABLED:-false}
+      PLANVAULT_MCP_DASHBOARD_BASE_URL: ${BASE_URL}
+      PLANVAULT_OUTBOUND_CONNECTORS_ENABLED: ${PLANVAULT_OUTBOUND_CONNECTORS_ENABLED:-false}
+      PLANVAULT_OUTBOUND_CONNECTORS_SIDECAR_URL: http://outbound-connectors:8878
+      PLANVAULT_OUTBOUND_CONNECTORS_INTERNAL_TOKEN: ${OUTBOUND_CONNECTORS_INTERNAL_TOKEN:-}
+      PLANVAULT_OUTBOUND_CONNECTORS_PUBLIC_BASE_URL: ${BASE_URL}
+      PLANVAULT_OUTBOUND_CONNECTORS_REAUTH_PAUSE_ENABLED: ${PLANVAULT_OUTBOUND_CONNECTORS_REAUTH_PAUSE_ENABLED:-false}
       JAVA_OPTS: "-Xms256m -Xmx768m -Djava.security.egd=file:/dev/./urandom"
       OTEL_JAVAAGENT_ENABLED: ${OTEL_JAVAAGENT_ENABLED:-false}
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-planvault-api}
@@ -292,6 +310,15 @@ services:
       PLANVAULT_ORG_SOFT_DELETE_SWEEPER_INTERVAL_HOURS: ${PLANVAULT_ORG_SOFT_DELETE_SWEEPER_INTERVAL_HOURS:-24}
       PLANVAULT_POLICY_ACKNOWLEDGEMENT_ENABLED: ${PLANVAULT_POLICY_ACKNOWLEDGEMENT_ENABLED:-false}
       GDPR_RECONCILIATION_ON_STARTUP: ${GDPR_RECONCILIATION_ON_STARTUP:-false}
+      # MCP (optional; CONFIGURATION.md "MCP Agent Server" and "Outbound MCP Connectors").
+      # Both roles read the same values so api and jobs agree (Redis is already enabled above).
+      PLANVAULT_MCP_ENABLED: ${PLANVAULT_MCP_ENABLED:-false}
+      PLANVAULT_MCP_DASHBOARD_BASE_URL: ${BASE_URL}
+      PLANVAULT_OUTBOUND_CONNECTORS_ENABLED: ${PLANVAULT_OUTBOUND_CONNECTORS_ENABLED:-false}
+      PLANVAULT_OUTBOUND_CONNECTORS_SIDECAR_URL: http://outbound-connectors:8878
+      PLANVAULT_OUTBOUND_CONNECTORS_INTERNAL_TOKEN: ${OUTBOUND_CONNECTORS_INTERNAL_TOKEN:-}
+      PLANVAULT_OUTBOUND_CONNECTORS_PUBLIC_BASE_URL: ${BASE_URL}
+      PLANVAULT_OUTBOUND_CONNECTORS_REAUTH_PAUSE_ENABLED: ${PLANVAULT_OUTBOUND_CONNECTORS_REAUTH_PAUSE_ENABLED:-false}
       JAVA_OPTS: "-Xms128m -Xmx512m -Djava.security.egd=file:/dev/./urandom"
       OTEL_JAVAAGENT_ENABLED: ${OTEL_JAVAAGENT_ENABLED:-false}
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME_JOBS:-planvault-jobs}
@@ -323,6 +350,81 @@ services:
         condition: service_started
     deploy:
       replicas: 1
+
+  # ---------------------------------------------------------------------------
+  # MCP agent server — PlanVault as an MCP server (Compose profile `mcp`).
+  # One image, two roles: ghcr.io/planvault/mcp runs the inbound role here.
+  # Cursor / Claude Code / Claude Desktop reach it at ${BASE_URL}/mcp via `edge`
+  # (nginx/default.conf) with a project API key scoped to hrn:project:mcp:execute;
+  # they see exactly four tools (discover_capabilities, execute, check_status,
+  # provide_input). Approvals never happen over MCP — only in the console.
+  # No host ports: the edge proxy is the only public entry point.
+  # Requires PLANVAULT_MCP_ENABLED=true on api/jobs (Redis-backed idempotency).
+  # ---------------------------------------------------------------------------
+  mcp:
+    image: ${PLANVAULT_REGISTRY}/mcp:${PLANVAULT_VERSION}
+    restart: unless-stopped
+    mem_limit: 192m
+    memswap_limit: 192m
+    security_opt:
+      - no-new-privileges:true
+    profiles:
+      - mcp
+    environment:
+      SIDECAR_ROLES: inbound
+      PLANVAULT_URL: http://api:8088
+      MCP_HTTP_PORT: "8877"
+    networks:
+      - planvault
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(8877,'127.0.0.1').once('connect',()=>process.exit(0)).once('error',()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Outbound MCP connector — OAuth 2.1 (CIMD / DCR) + Streamable HTTP adapter
+  # for MCP servers registered with auth_mode = "oauth" (Compose profile
+  # `mcp_outbound`). Same image as `mcp`, outbound role only.
+  # INTERNAL ONLY: no host ports and no edge route; api/jobs reach it at
+  # http://outbound-connectors:8878 with the shared bearer
+  # OUTBOUND_CONNECTORS_INTERNAL_TOKEN (>= 32 chars, generated by
+  # scripts/generate-secrets.sh). Stateless: tokens arrive per request and are
+  # re-encrypted under the org DEK by the API; nothing is persisted here.
+  # Requires PLANVAULT_OUTBOUND_CONNECTORS_ENABLED=true on api/jobs and an
+  # https BASE_URL (OAuth redirect URI = ${BASE_URL}/api/v1/mcp/oauth/callback).
+  # The `stdio`, `bearer` and `headers` MCP auth modes do NOT need this service.
+  # ---------------------------------------------------------------------------
+  outbound-connectors:
+    image: ${PLANVAULT_REGISTRY}/mcp:${PLANVAULT_VERSION}
+    restart: unless-stopped
+    mem_limit: 192m
+    memswap_limit: 192m
+    security_opt:
+      - no-new-privileges:true
+    profiles:
+      - mcp_outbound
+    environment:
+      SIDECAR_ROLES: outbound
+      CONNECTOR_SIDECAR_PORT: "8878"
+      CONNECTOR_SIDECAR_BIND: "0.0.0.0"
+      CONNECTOR_SIDECAR_INTERNAL_TOKEN: ${OUTBOUND_CONNECTORS_INTERNAL_TOKEN:-}
+      # Must equal PLANVAULT_OUTBOUND_CONNECTORS_PUBLIC_BASE_URL + /api/v1/mcp/oauth/client-metadata.json
+      # on api; the sidecar derives client_uri and the redirect URI from this one value.
+      CONNECTOR_SIDECAR_CLIENT_METADATA_URL: ${BASE_URL}/api/v1/mcp/oauth/client-metadata.json
+      CONNECTOR_SIDECAR_CLIENT_NAME: ${CONNECTOR_SIDECAR_CLIENT_NAME:-PlanVault}
+    networks:
+      - planvault
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(8878,'127.0.0.1').once('connect',()=>process.exit(0)).once('error',()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   edge:
     image: ${PLANVAULT_REGISTRY}/front:${PLANVAULT_VERSION}

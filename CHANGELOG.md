@@ -7,6 +7,52 @@ Images follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.38] — 2026-09-03
+
+MCP release. PlanVault now speaks Model Context Protocol in both directions from one new,
+optional image (`ghcr.io/planvault/mcp`, signed and SBOM-published like `api` and `front`).
+Nothing changes for a deployment that does not enable the new profiles.
+
+### Added
+- Compose profile `mcp` — service `mcp` (inbound role of `ghcr.io/planvault/mcp`): PlanVault as an
+  MCP server for Cursor / Claude Code / Claude Desktop at `${BASE_URL}/mcp` (four tools:
+  `discover_capabilities`, `execute`, `check_status`, `provide_input`; approvals stay in the
+  console). Enable with `PLANVAULT_MCP_ENABLED=true` + `COMPOSE_PROFILES=mcp`.
+- Compose profile `mcp_outbound` — service `outbound-connectors` (outbound role of the same
+  image): stateless OAuth 2.1 (CIMD → preconfigured → DCR) + Streamable HTTP adapter required
+  only for MCP servers registered with `auth_mode = "oauth"`. Enable with
+  `PLANVAULT_OUTBOUND_CONNECTORS_ENABLED=true` + `COMPOSE_PROFILES=mcp_outbound`; requires an
+  `https` `BASE_URL`.
+- Edge route `location = /mcp` in `nginx/default.conf` and `nginx/default-tls.conf` (Streamable
+  HTTP: buffering off, long timeouts, upstream resolved at request time so the edge starts
+  without the optional service).
+- `.env` keys passed through to `api` and `jobs`: `PLANVAULT_MCP_ENABLED`,
+  `PLANVAULT_MCP_DASHBOARD_BASE_URL` (= `BASE_URL`), `PLANVAULT_OUTBOUND_CONNECTORS_ENABLED`,
+  `PLANVAULT_OUTBOUND_CONNECTORS_PUBLIC_BASE_URL` (= `BASE_URL`),
+  `PLANVAULT_OUTBOUND_CONNECTORS_REAUTH_PAUSE_ENABLED`, `OUTBOUND_CONNECTORS_INTERNAL_TOKEN`,
+  `CONNECTOR_SIDECAR_CLIENT_NAME`, `COMPOSE_PROFILES`.
+- `scripts/generate-secrets.sh` generates `OUTBOUND_CONNECTORS_INTERNAL_TOKEN` (64 hex chars).
+- `scripts/preflight-check.sh` validates profile/flag consistency, token length and `https`
+  `BASE_URL` for the outbound connector; `scripts/smoke-test.sh` probes `/mcp` (expects 401
+  without a key) and includes `mcp` / `outbound-connectors` logs when enabled.
+- `docs/adr/0002-mcp-sidecar-profiles.md` — why one image, two roles, two profiles, and why
+  `/mcp` is routed through `edge`.
+- `CONFIGURATION.md` sections "MCP Agent Server (Inbound)" and "Outbound MCP Connectors
+  (OAuth 2.1)" replace the previous "Not In This Distribution" note.
+
+### Changed
+- Default `PLANVAULT_VERSION` and `VERSION` pin to `ghcr.io/planvault/*:0.1.38`.
+- Cosign verification loop and outbound-dependency tables now list the `mcp` image.
+- `README.md`, `SECURITY_MODEL.md`, `docs/production-topology.md`,
+  `docs/networking-and-data-boundaries.md`, `docs/smoke-tests.md` and `docs/upgrade.md`
+  describe the two optional services and their exposure.
+
+### Note
+- Versions 0.1.20–0.1.37 were image-only releases without deployment-configuration changes;
+  this entry covers the configuration delta since 0.1.19. The MCP agent server authenticates
+  with a static Bearer project API key over HTTPS; inbound OAuth 2.1 for MCP clients is not
+  part of this release.
+
 ## [0.1.19] — 2026-07-05
 
 ### Changed

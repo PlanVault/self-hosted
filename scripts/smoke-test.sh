@@ -194,7 +194,32 @@ if [[ -f "$ENV_FILE" ]]; then
   fi
 fi
 
-for service in jobs api; do
+if [[ -f "$ENV_FILE" ]]; then
+  mcp_enabled="$(read_env_value PLANVAULT_MCP_ENABLED 2>/dev/null || printf 'false')"
+  if [[ "$mcp_enabled" == "true" ]]; then
+    # The MCP agent server rejects unauthenticated requests with 401 (JSON-RPC error body).
+    # 502/503 means the edge is up but the `mcp` profile is not running.
+    mcp_url="http://127.0.0.1:${http_port}/mcp"
+    mcp_status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 -X POST -H 'Content-Type: application/json' -d '{}' "$mcp_url" || true)"
+    case "$mcp_status" in
+      401) pass "MCP agent server reachable and requires a Bearer key: ${mcp_url}" ;;
+      502|503|504) fail "MCP agent server not running behind edge (${mcp_status}); start with --profile mcp or set COMPOSE_PROFILES=mcp" ;;
+      *) warn "MCP agent server returned HTTP ${mcp_status} for an unauthenticated POST (expected 401)" ;;
+    esac
+  fi
+fi
+
+log_services="jobs api"
+if [[ -f "$ENV_FILE" ]]; then
+  if [[ "$(read_env_value PLANVAULT_MCP_ENABLED 2>/dev/null || printf 'false')" == "true" ]]; then
+    log_services="${log_services} mcp"
+  fi
+  if [[ "$(read_env_value PLANVAULT_OUTBOUND_CONNECTORS_ENABLED 2>/dev/null || printf 'false')" == "true" ]]; then
+    log_services="${log_services} outbound-connectors"
+  fi
+fi
+
+for service in $log_services; do
   printf '\nRecent %s logs (redacted):\n' "$service"
   if docker compose --env-file "$ENV_FILE" logs "$service" --tail=40 2>/dev/null | redact; then
     if docker compose --env-file "$ENV_FILE" logs "$service" --tail=120 2>/dev/null |
