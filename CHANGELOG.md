@@ -47,6 +47,12 @@ Nothing changes for a deployment that does not enable the new profiles.
   `docs/networking-and-data-boundaries.md`, `docs/smoke-tests.md` and `docs/upgrade.md`
   describe the two optional services and their exposure.
 
+### Fixed
+- Cosign verification snippets (`README.md`, `docs/upgrade.md`, `docs/security-artifacts.md`) used
+  `--certificate-identity-regexp="github.com/planvault"`, which never matched: the signing identity
+  is case-sensitive `https://github.com/PlanVault/planvault/.github/workflows/release.yml@refs/tags/v<version>`.
+  The snippets now pin that identity (verified against `api`, `front`, and `mcp` 0.1.38).
+
 ### Note
 - Versions 0.1.20–0.1.37 were image-only releases without deployment-configuration changes;
   this entry covers the configuration delta since 0.1.19. The MCP agent server authenticates

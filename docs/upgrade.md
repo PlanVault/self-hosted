@@ -63,7 +63,7 @@ Optionally verify signatures:
 VERSION="$(tr -d '[:space:]' < VERSION)"
 for image in api front mcp; do   # `mcp` only if you enable an MCP profile
   cosign verify "ghcr.io/planvault/${image}:${VERSION}" \
-    --certificate-identity-regexp="github.com/planvault" \
+    --certificate-identity-regexp="^https://github.com/PlanVault/planvault/\.github/workflows/release\.yml@refs/tags/v" \
     --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
 done
 ```
