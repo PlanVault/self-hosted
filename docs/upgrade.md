@@ -68,6 +68,32 @@ for image in api front mcp; do   # `mcp` only if you enable an MCP profile
 done
 ```
 
+## Upgrading To 0.1.39 (Connections)
+
+0.1.39 moves every outbound credential — imported OpenAPI services, MCP servers, outbound
+webhooks, custom LLM providers — onto one **connection** model (Organisation settings →
+Connections). Flyway `V10`–`V14` run automatically in `jobs`; nothing changes in `.env` or
+`docker-compose.yml` for a default deployment.
+
+What needs an operator after the upgrade:
+
+1. **HTTP MCP servers that had `bearer` / `headers` / `oauth` auth.** `V13` drops that per-server
+   auth without migrating it. Open each server, pick or create a connection (`http_bearer`,
+   `custom_headers`, or `oauth2_authorization_code` with `flowDriver = mcp_sidecar`), and press
+   **Connect** for OAuth ones. Until then the server is called unauthenticated and its tools fail
+   with the upstream `401`.
+2. **Imported OpenAPI services with security schemes.** Their tools now fail closed with
+   `connection_missing` instead of reading a same-named secret. Bind a connection per scheme
+   (Org tool catalog → service → **Auth bindings**); the Connections page inventory lists every
+   unbound scheme. Secrets that only existed for this purpose can be deleted.
+3. **Profile `mcp_outbound`.** `docker compose up -d outbound-connectors` so the sidecar picks up the
+   new `CONNECTOR_SIDECAR_CLIENT_METADATA_URL` (`…/api/v1/oauth/client-metadata.json`); then
+   re-register any client whose authorization server cached the old document URL.
+
+Verification after start: `curl -fsS "${BASE_URL}/api/v1/oauth/client-metadata.json"` returns the
+client document, and the Connections page shows **Integrations with no credential bound: 0** once
+every scheme is bound. Reason codes are listed in `docs/troubleshooting.md` ("Connection Problems").
+
 ## Upgrading To 0.1.38 (MCP Profiles)
 
 0.1.38 adds two optional Compose profiles (`mcp`, `mcp_outbound`) and the `ghcr.io/planvault/mcp`

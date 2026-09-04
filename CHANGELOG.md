@@ -7,6 +7,18 @@ Images follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.39] — 2026-09-04
+
+### Breaking
+- **MCP server auth is no longer stored on the server row.** Flyway `V13` drops
+  `org_mcp_servers.auth_mode` / `auth_config_json` and the `org_mcp_oauth_*` tables without a data
+  migration (there were no production tenants to migrate). After upgrading, every HTTP MCP server
+  that used `bearer`, `headers` or `oauth` calls its upstream **unauthenticated** until an operator
+  binds a connection to it (Organisation settings → MCP → server → Connection). OAuth grants must be
+  re-consented through the connection's **Connect** button. `stdio` servers are unaffected.
+- `/api/v1/mcp/oauth/callback` and `/api/v1/mcp/oauth/client-metadata.json` are gone; the only
+  callback is `${BASE_URL}/api/v1/oauth/callback` (see "Fixed" below for the sidecar wiring).
+
 ### Changed
 - **One connection model for everything outbound.** An MCP server no longer carries its own auth
   mode: it binds a connection (Organisation settings → Connections) exactly as an imported
@@ -20,6 +32,7 @@ Images follow [Semantic Versioning](https://semver.org/).
 - `docs/troubleshooting.md` section "MCP Endpoint Or OAuth Connector Problems" is split into
   "MCP Endpoint Problems" and **"Connection Problems (Outbound Auth)"**, the latter keyed by the
   `connection_*` reason codes a run actually reports.
+- Default `PLANVAULT_VERSION` and `VERSION` pin to `ghcr.io/planvault/*:0.1.39`.
 
 ### Added
 - Documented the `PLANVAULT_CONNECTIONS_*` tuning variables (binding cache TTL, token refresh
