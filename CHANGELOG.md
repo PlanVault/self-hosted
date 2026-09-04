@@ -7,6 +7,36 @@ Images follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **One connection model for everything outbound.** An MCP server no longer carries its own auth
+  mode: it binds a connection (Organisation settings → Connections) exactly as an imported
+  OpenAPI service does, through the same resolver, statuses, audit vocabulary and reason codes.
+  Nothing to do in `.env` — this is a console and API change.
+- `CONFIGURATION.md` section "Outbound MCP Connectors (OAuth 2.1)" is now **"Outbound Connections
+  (MCP + API)"**, and states the two prerequisites separately, because they are independent: an
+  `https` `BASE_URL` is required by any `oauth2_authorization_code` connection (either flow
+  driver), while profile `mcp_outbound` is required only by `flowDriver = mcp_sidecar`.
+  `oauth2_client_credentials`, `mtls` and the static modes need neither.
+- `docs/troubleshooting.md` section "MCP Endpoint Or OAuth Connector Problems" is split into
+  "MCP Endpoint Problems" and **"Connection Problems (Outbound Auth)"**, the latter keyed by the
+  `connection_*` reason codes a run actually reports.
+
+### Added
+- Documented the `PLANVAULT_CONNECTIONS_*` tuning variables (binding cache TTL, token refresh
+  skew, request timeout, max refresh failures, sweep interval, discovery cache TTL). They have
+  working defaults in the API image and are **not** wired in `docker-compose.yml`; to change one,
+  use a Compose override on both `api` and `jobs`.
+- `mtls` connections (client certificate, optionally with an RFC 8705 `tls_client_auth` grant)
+  are accepted by every deployment — they need neither the sidecar nor an `https` `BASE_URL`.
+
+### Fixed
+- `CONNECTOR_SIDECAR_CLIENT_METADATA_URL` and the OAuth redirect URI now point at
+  `${BASE_URL}/api/v1/oauth/client-metadata.json` and `…/api/v1/oauth/callback`. The
+  `/api/v1/mcp/oauth/*` routes were removed upstream when MCP moved onto the connection model, so
+  a `mcp_outbound` deployment was advertising a client-metadata URL that answers `404`. Deployments
+  running that profile must `docker compose up -d outbound-connectors` after upgrading, and
+  re-register any client whose authorization server cached the old document URL.
+
 ## [0.1.38] — 2026-09-03
 
 MCP release. PlanVault now speaks Model Context Protocol in both directions from one new,

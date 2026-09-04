@@ -213,7 +213,7 @@ services:
       PLANVAULT_ORG_SOFT_DELETE_GRACE_DAYS: ${PLANVAULT_ORG_SOFT_DELETE_GRACE_DAYS:-7}
       PLANVAULT_ORG_SOFT_DELETE_SWEEPER_INTERVAL_HOURS: ${PLANVAULT_ORG_SOFT_DELETE_SWEEPER_INTERVAL_HOURS:-24}
       PLANVAULT_POLICY_ACKNOWLEDGEMENT_ENABLED: ${PLANVAULT_POLICY_ACKNOWLEDGEMENT_ENABLED:-false}
-      # MCP (optional; CONFIGURATION.md "MCP Agent Server" and "Outbound MCP Connectors").
+      # MCP (optional; CONFIGURATION.md "MCP Agent Server" and "Outbound Connections").
       # Both roles read the same values so api and jobs agree (Redis is already enabled above).
       PLANVAULT_MCP_ENABLED: ${PLANVAULT_MCP_ENABLED:-false}
       PLANVAULT_MCP_DASHBOARD_BASE_URL: ${BASE_URL}
@@ -310,7 +310,7 @@ services:
       PLANVAULT_ORG_SOFT_DELETE_SWEEPER_INTERVAL_HOURS: ${PLANVAULT_ORG_SOFT_DELETE_SWEEPER_INTERVAL_HOURS:-24}
       PLANVAULT_POLICY_ACKNOWLEDGEMENT_ENABLED: ${PLANVAULT_POLICY_ACKNOWLEDGEMENT_ENABLED:-false}
       GDPR_RECONCILIATION_ON_STARTUP: ${GDPR_RECONCILIATION_ON_STARTUP:-false}
-      # MCP (optional; CONFIGURATION.md "MCP Agent Server" and "Outbound MCP Connectors").
+      # MCP (optional; CONFIGURATION.md "MCP Agent Server" and "Outbound Connections").
       # Both roles read the same values so api and jobs agree (Redis is already enabled above).
       PLANVAULT_MCP_ENABLED: ${PLANVAULT_MCP_ENABLED:-false}
       PLANVAULT_MCP_DASHBOARD_BASE_URL: ${BASE_URL}
@@ -396,7 +396,7 @@ services:
   # scripts/generate-secrets.sh). Stateless: tokens arrive per request and are
   # re-encrypted under the org DEK by the API; nothing is persisted here.
   # Requires PLANVAULT_OUTBOUND_CONNECTORS_ENABLED=true on api/jobs and an
-  # https BASE_URL (OAuth redirect URI = ${BASE_URL}/api/v1/mcp/oauth/callback).
+  # https BASE_URL (OAuth redirect URI = ${BASE_URL}/api/v1/oauth/callback).
   # The `stdio`, `bearer` and `headers` MCP auth modes do NOT need this service.
   # ---------------------------------------------------------------------------
   outbound-connectors:
@@ -413,9 +413,10 @@ services:
       CONNECTOR_SIDECAR_PORT: "8878"
       CONNECTOR_SIDECAR_BIND: "0.0.0.0"
       CONNECTOR_SIDECAR_INTERNAL_TOKEN: ${OUTBOUND_CONNECTORS_INTERNAL_TOKEN:-}
-      # Must equal PLANVAULT_OUTBOUND_CONNECTORS_PUBLIC_BASE_URL + /api/v1/mcp/oauth/client-metadata.json
+      # Must equal PLANVAULT_OUTBOUND_CONNECTORS_PUBLIC_BASE_URL + /api/v1/oauth/client-metadata.json
+      # (one callback and one client document for every outbound protocol; /api/v1/mcp/oauth/* was removed in 0.1.39)
       # on api; the sidecar derives client_uri and the redirect URI from this one value.
-      CONNECTOR_SIDECAR_CLIENT_METADATA_URL: ${BASE_URL}/api/v1/mcp/oauth/client-metadata.json
+      CONNECTOR_SIDECAR_CLIENT_METADATA_URL: ${BASE_URL}/api/v1/oauth/client-metadata.json
       CONNECTOR_SIDECAR_CLIENT_NAME: ${CONNECTOR_SIDECAR_CLIENT_NAME:-PlanVault}
     networks:
       - planvault

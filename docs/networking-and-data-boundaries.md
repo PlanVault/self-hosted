@@ -24,7 +24,7 @@ delivery, operator runbooks, and a validated smoke test.
 | `${HTTP_PORT:-80}` to `edge` | Host port | Dashboard, API, and Keycloak browser flows over HTTP unless TLS is terminated upstream. |
 | `${HTTPS_PORT:-443}` to `edge-tls` | Host port with profile `direct_tls` | Optional direct TLS when certs are mounted under `./tls/`. |
 | `${BASE_URL}/mcp` via `edge` | Path on the existing edge port, only with profile `mcp` | MCP agent server for Cursor / Claude Code / Claude Desktop; Bearer project API key (`hrn:project:mcp:execute`) required; `502` when the profile is not running. |
-| `${BASE_URL}/api/v1/mcp/oauth/callback` and `…/client-metadata.json` via `edge` | Path on the existing edge port, used only with profile `mcp_outbound` | OAuth 2.1 redirect URI and CIMD client document for third-party MCP authorization servers; served by `api`. |
+| `${BASE_URL}/api/v1/oauth/callback` and `…/client-metadata.json` via `edge` | Paths on the existing edge port, used by any `oauth2_authorization_code` connection | OAuth 2.1 redirect URI and CIMD client document for third-party authorization servers, MCP and REST alike; served by `api`. Needed with `flowDriver = direct` even when no MCP profile runs. |
 | `${CADDY_HTTP_PORT:-80}` / `${CADDY_HTTPS_PORT:-443}` to `caddy` | Host ports with `docker-compose.caddy.yml` | Optional managed HTTPS with automatic certificates. Set `HTTP_PORT` away from `80` to avoid conflicts. |
 | Grafana `127.0.0.1:${GRAFANA_PORT:-3000}` | Localhost only, overlay | Optional monitoring UI. |
 
@@ -39,7 +39,7 @@ Internal services do not publish host ports by default.
 | Configured LLM providers | If using external models | Planner and utility model calls through LiteLLM. |
 | Local/private model endpoints | If configured | Private model calls through LiteLLM, for example Ollama/vLLM/OpenAI-compatible endpoints. |
 | Configured tool/API targets | If tools call external systems | Runtime OpenAPI, webhook, MCP, and integration calls. |
-| Third-party MCP authorization servers | If `auth_mode = "oauth"` MCP servers are registered (profile `mcp_outbound`) | OAuth 2.1 discovery, client registration (CIMD / DCR), token exchange, and refresh from `outbound-connectors`; the authorization server must also be able to fetch `${BASE_URL}/api/v1/mcp/oauth/client-metadata.json`. |
+| Third-party authorization servers | If any `oauth2_*` connection is configured | Discovery, client registration (CIMD / DCR), token exchange and refresh — from `api` for `flowDriver = direct` and for `oauth2_client_credentials`, from `outbound-connectors` for `flowDriver = mcp_sidecar` (profile `mcp_outbound`). For a delegated grant the authorization server must also be able to fetch `${BASE_URL}/api/v1/oauth/client-metadata.json`. |
 | Optional OTLP endpoint | If telemetry export is enabled | Traces/logs/metrics to customer-operated collector. |
 
 No separate PlanVault product telemetry endpoint is required by the self-hosted

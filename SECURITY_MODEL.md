@@ -75,8 +75,26 @@ and are off by default (see `docs/adr/0002-mcp-sidecar-profiles.md`).
 - The API re-validates its outbound URL policy immediately before every call to a third-party
   MCP server (DNS-rebinding window closed). The sidecar performs no SSRF validation of its own
   and must therefore never be exposed beyond the private network.
-- The `stdio`, `bearer`, and `headers` MCP auth modes never touch this service; only
-  `auth_mode = "oauth"` does.
+- Only a connection with `flowDriver = mcp_sidecar` touches this service. Every other outbound
+  credential — static modes, `mtls`, `oauth2_client_credentials`, and `oauth2_authorization_code`
+  with `flowDriver = direct` — is resolved and applied by `api` itself, with no sidecar involved.
+
+**Outbound credentials (connections)** — one model for everything PlanVault calls:
+
+- Material is encrypted under the organisation DEK and is returned by no endpoint; API responses
+  carry `credentialFields`, the NAMES of the fields that are set, never their values. A field may
+  instead be a `secret:KEY` pointer into the organisation vault, which is the only channel a
+  hosted deployment accepts.
+- The credential is resolved at the **execution boundary** — after the plan is approved,
+  immediately before the request is built — so no credential can reach a prompt, a persisted
+  plan, the parameter audit, run diagnostics, or an export. The model is not part of that path.
+- Every failure is closed and typed: an unbound source, an unusable reference, a rejected URL and
+  a lapsed grant each produce a named reason code, never an unauthenticated request.
+- `mtls` credentials (client certificate + PKCS#8 key) are loaded into an in-memory keystore and
+  never written to disk. The TLS context uses the connection's key managers and the **JDK default
+  trust managers**: mTLS changes who PlanVault is to an upstream, never whom it trusts, so a
+  private CA remains a deployment trust-store decision rather than something a connection can
+  relax.
 
 ## Supply-Chain Artifacts
 

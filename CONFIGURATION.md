@@ -465,27 +465,50 @@ treated as untrusted input and passes every policy gate. The MCP agent server au
 a static Bearer key over HTTPS — inbound OAuth 2.1 for MCP clients is an upstream roadmap item.
 When the profile is not running, `${BASE_URL}/mcp` returns `502` from `edge` by design.
 
-## Outbound MCP Connectors (OAuth 2.1) — Profile `mcp_outbound`
+## Outbound Connections (MCP + API)
 
-MCP servers registered in the console (Organisation settings → MCP) are executed by the API
-itself for the `stdio` (with `env`, incl. `secret:KEY` vault references), `bearer` and `headers`
-auth modes — **no extra service is needed for those**. Servers registered with
-`auth_mode = "oauth"` need the **outbound connector role** of the same sidecar image
-(`outbound-connectors` service): a stateless process that performs the OAuth 2.1
-authorization-code + PKCE flow (client registration precedence CIMD → preconfigured client →
-DCR) and speaks Streamable HTTP MCP on the API's behalf. Tokens are encrypted under the
-organisation DEK by the API; the sidecar persists nothing and is never reachable from outside
-the Docker network.
+Everything PlanVault calls outward — an imported OpenAPI service, a registered MCP server —
+authenticates through one object: a **connection** (Organisation settings → Connections). It
+holds the auth mode, the non-secret configuration, and credential material encrypted under the
+organisation DEK, and it is bound to the source or the server that uses it. There is no
+per-server auth mode any more and no separate "MCP OAuth" surface.
 
-| Outbound MCP auth mode | Needs `mcp_outbound` |
-|------------------------|----------------------|
-| `stdio` with `env` (incl. `secret:KEY`) | No |
-| `http` with `bearer` | No |
-| `http` with `headers` | No |
-| `http` with `oauth` (OAuth 2.1, CIMD / DCR) | **Yes** — rejected at create/update time while disabled |
+Almost none of this needs a new service or a new variable. The table below is the whole of what
+a deployment has to decide:
 
-Enable with an `https` `BASE_URL` (the OAuth redirect URI and the CIMD client document are
-derived from it; the API refuses to start with a plain `http` origin other than `localhost`):
+| Connection auth mode | Needs profile `mcp_outbound` | Needs an `https` `BASE_URL` |
+|---|---|---|
+| `none`, `api_key`, `http_basic`, `http_bearer`, `custom_headers` | No | No |
+| `mtls` (client certificate; optionally with a nested client-credentials grant) | No | No |
+| `oauth2_client_credentials` | No | No |
+| `oauth2_authorization_code` with `flowDriver = direct` | No | **Yes** |
+| `oauth2_authorization_code` with `flowDriver = mcp_sidecar` | **Yes** | **Yes** |
+
+Two rules, and they are independent:
+
+- **`https BASE_URL` is a property of the delegated grant, not of MCP.** Any
+  `oauth2_authorization_code` connection — either driver — derives its redirect URI and its
+  client-metadata (CIMD) document from `PLANVAULT_OUTBOUND_CONNECTORS_PUBLIC_BASE_URL`, which
+  Compose wires from `BASE_URL`. Without an acceptable origin (`https`, or `http://localhost` in
+  development) such a connection is **refused at create time** with
+  `CONNECTION_PUBLIC_BASE_URL_REQUIRED` — before an operator can click Connect and fail
+  halfway. Every other mode, `oauth2_client_credentials` and `mtls` included, works with any
+  `BASE_URL`, because nothing external ever has to reach back into the deployment.
+- **The profile is a property of the driver.** `flowDriver = mcp_sidecar` — the driver an MCP
+  server needs, because its authorization server is discovered from the MCP handshake rather
+  than from anything the API could fetch — routes the whole call through the
+  `outbound-connectors` service, so it needs profile `mcp_outbound` and
+  `PLANVAULT_OUTBOUND_CONNECTORS_ENABLED=true`. `flowDriver = direct` speaks RFC 6749 + PKCE
+  from the API itself and needs **no sidecar at all**; that is the driver an imported REST API
+  uses. A connection whose driver is unavailable is refused with
+  `CONNECTION_AUTH_MODE_UNAVAILABLE` rather than failing inside a run.
+
+The sidecar, when enabled, is a stateless process: it performs the OAuth 2.1 authorization-code
++ PKCE flow (client registration precedence CIMD → preconfigured client → DCR) and speaks
+Streamable HTTP MCP on the API's behalf. Tokens are encrypted under the organisation DEK by the
+API; the sidecar persists nothing and is never reachable from outside the Docker network.
+
+Enable it with an `https` `BASE_URL`:
 
 ```bash
 # .env
@@ -500,27 +523,48 @@ docker compose --env-file .env up -d
 
 | Variable | Services | Default | Change? | Meaning |
 |----------|----------|---------|---------|---------|
-| `PLANVAULT_OUTBOUND_CONNECTORS_ENABLED` | `api`, `jobs` | `false` | Yes, to enable | Allows `auth_mode = "oauth"` MCP servers and routes their calls through the sidecar. When `true` the API requires the token and an acceptable public base URL at startup. |
+| `PLANVAULT_OUTBOUND_CONNECTORS_ENABLED` | `api`, `jobs` | `false` | Yes, to enable | Allows connections with `flowDriver = mcp_sidecar` and routes their calls through the sidecar. When `true` the API requires the token and an acceptable public base URL at startup. |
 | `OUTBOUND_CONNECTORS_INTERNAL_TOKEN` | `api`, `jobs`, `outbound-connectors` | generated (64 hex chars) | Generate, then preserve | Shared bearer between the API and the sidecar. Both sides refuse to start with fewer than 32 characters. |
 | `PLANVAULT_OUTBOUND_CONNECTORS_SIDECAR_URL` | `api`, `jobs` | `http://outbound-connectors:8878` | No | Internal address of the sidecar. |
-| `PLANVAULT_OUTBOUND_CONNECTORS_PUBLIC_BASE_URL` | `api`, `jobs` | `${BASE_URL}` (wired by Compose) | No | PlanVault's externally reachable origin. Produces the CIMD document URL `…/api/v1/mcp/oauth/client-metadata.json` and the redirect URI `…/api/v1/mcp/oauth/callback`; the third-party authorization server must be able to fetch the former. |
+| `PLANVAULT_OUTBOUND_CONNECTORS_PUBLIC_BASE_URL` | `api`, `jobs` | `${BASE_URL}` (wired by Compose) | No | PlanVault's externally reachable origin. Produces the CIMD document URL `…/api/v1/oauth/client-metadata.json` and the redirect URI `…/api/v1/oauth/callback`; the third-party authorization server must be able to fetch the former. One callback and one client document serve every outbound protocol — the older `/api/v1/mcp/oauth/*` routes were removed in 0.1.39. |
 | `PLANVAULT_OUTBOUND_CONNECTORS_DASHBOARD_RETURN_URL` | `api`, `jobs` | falls back to the public base URL | Optional | Where the browser is sent after the OAuth callback. Not wired by default; set through a Compose override if the console lives on another origin. |
 | `PLANVAULT_OUTBOUND_CONNECTORS_REAUTH_PAUSE_ENABLED` | `api`, `jobs` | `false` | Optional | When `true`, a lapsed grant pauses the run in `awaiting_reauth` (TTL 3600 s) instead of failing it closed with `reconnect_required`. Separate operational decision; off by default. |
 | `SIDECAR_ROLES` | `outbound-connectors` | `outbound` | No | Role of the sidecar image in this service. |
 | `CONNECTOR_SIDECAR_PORT` / `CONNECTOR_SIDECAR_BIND` | `outbound-connectors` | `8878` / `0.0.0.0` | No | Internal listener. Never published on the host. |
-| `CONNECTOR_SIDECAR_CLIENT_METADATA_URL` | `outbound-connectors` | `${BASE_URL}/api/v1/mcp/oauth/client-metadata.json` (wired) | No | Must equal the API's public base URL + the CIMD path; the sidecar derives `client_uri` and the redirect URI from it. |
+| `CONNECTOR_SIDECAR_CLIENT_METADATA_URL` | `outbound-connectors` | `${BASE_URL}/api/v1/oauth/client-metadata.json` (wired) | No | Must equal the API's public base URL + the CIMD path; the sidecar derives `client_uri` and the redirect URI from it. |
 | `CONNECTOR_SIDECAR_CLIENT_NAME` | `outbound-connectors` | `PlanVault` | Optional | `client_name` presented to third-party authorization servers during registration. |
 
 Operational behaviour: tokens are refreshed silently before expiry with one retry on `401`;
-a revoked grant fails the tool call closed with `reconnect_required` and the server must be
+a revoked grant fails the tool call closed with `reconnect_required` and the connection must be
 reconnected in the console. `code`, `code_verifier`, `refresh_token` and `client_secret` are
 redacted from sidecar logs. Disabling the feature again (`false` + profile removed) leaves
-existing `oauth` servers rejected at run time until they are switched to another auth mode.
+existing `mcp_sidecar` connections rejected at run time until they are moved to another mode.
 
 **Workaround without the profile.** If the third-party MCP server also accepts a long-lived API
-key, register it with `auth_mode = "bearer"` and a `secret:KEY` reference resolved from the
-organization vault. Treat that as an explicit decision to hold a long-lived credential: it does
-not rotate, and it cannot be revoked from PlanVault.
+key, create an `http_bearer` connection for it (the value may be a `secret:KEY` reference into
+the organisation vault) and bind it to the server. Treat that as an explicit decision to hold a
+long-lived credential: it does not rotate, and it cannot be revoked from PlanVault.
+
+### Connection tuning (`connections.*`)
+
+These have sensible defaults and **no deployment needs to set them**. They are listed because
+they are the knobs an operator reaches for when triaging a token problem, and because they are
+the only `connections` settings that exist — there is no new required variable in this area.
+
+They live in the API image's HOCON (`conf/connections.conf`) and each reads an optional
+environment variable of the same name. None is wired in `docker-compose.yml`; to change one, add
+it through a Compose override on **both** `api` and `jobs` (the `jobs` role runs the proactive
+token sweep, so a value set on only one service would make the two disagree about when a grant
+is due).
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `PLANVAULT_CONNECTIONS_BINDING_CACHE_TTL_SECONDS` | `30` | How long a resolved `(source, scheme) → connection` binding may be cached. `0` disables the cache; credential MATERIAL is never cached by it, so rotating a key always takes effect on the next call. |
+| `PLANVAULT_CONNECTIONS_TOKEN_REFRESH_SKEW_SECONDS` | `120` | A token counts as expired this long before it really is, so an in-flight request cannot race its own expiry. |
+| `PLANVAULT_CONNECTIONS_TOKEN_REQUEST_TIMEOUT_MS` | `15000` | Timeout for one request to an authorization server. |
+| `PLANVAULT_CONNECTIONS_TOKEN_MAX_REFRESH_FAILURES` | `3` | Consecutive refresh failures before the connection is parked in `error`. The next success clears both the status and the counter. |
+| `PLANVAULT_CONNECTIONS_TOKEN_SWEEP_INTERVAL_SECONDS` | `60` | How often the `jobs` role renews grants that have entered the skew. A latency optimisation, not a correctness requirement — with the sweep off, the on-demand path still guarantees a live token. |
+| `PLANVAULT_CONNECTIONS_DISCOVERY_CACHE_TTL_SECONDS` | `3600` | How long an OIDC / RFC 8414 discovery document is reused before it is re-fetched. |
 
 ## Default Billing Plan
 

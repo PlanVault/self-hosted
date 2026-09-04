@@ -73,7 +73,7 @@ done
 0.1.38 adds two optional Compose profiles (`mcp`, `mcp_outbound`) and the `ghcr.io/planvault/mcp`
 image. Existing deployments need no action: both API flags default to `false` and both
 profiles are off. To adopt them, see `CONFIGURATION.md` ("MCP Agent Server (Inbound)",
-"Outbound MCP Connectors (OAuth 2.1)") and re-run `./scripts/generate-secrets.sh` once so
+"Outbound Connections (MCP + API)") and re-run `./scripts/generate-secrets.sh` once so
 `OUTBOUND_CONNECTORS_INTERNAL_TOKEN` exists in `.env` before enabling `mcp_outbound`.
 
 ## Migration Order

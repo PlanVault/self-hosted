@@ -319,7 +319,7 @@ docker compose --env-file .env up -d
 
 Both flags default to `false` and both profiles are off by default; a deployment that does not
 use MCP is unchanged. Full variable reference: [CONFIGURATION.md](CONFIGURATION.md) sections
-"MCP Agent Server (Inbound)" and "Outbound MCP Connectors (OAuth 2.1)".
+"MCP Agent Server (Inbound)" and "Outbound Connections (MCP + API)".
 
 ## Account bootstrap
 
